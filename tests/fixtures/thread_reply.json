@@ -1,0 +1,13 @@
+{
+  "client_msg_id": "4a1f7c2e-0000-4000-8000-000000000002",
+  "type": "message",
+  "text": "Replying in the thread",
+  "user": "U0TESTUSER2",
+  "ts": "1716500100.000200",
+  "thread_ts": "1716500000.123456",
+  "parent_user_id": "U0TESTUSER1",
+  "team": "T0TESTTEAM",
+  "channel": "C0TESTCHAN1",
+  "event_ts": "1716500100.000200",
+  "channel_type": "channel"
+}

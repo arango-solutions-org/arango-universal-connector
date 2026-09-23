@@ -1,0 +1,22 @@
+{
+  "type": "message",
+  "subtype": "message_changed",
+  "message": {
+    "type": "message",
+    "text": "Hello from the test channel (edited)",
+    "user": "U0TESTUSER1",
+    "ts": "1716500000.123456",
+    "edited": {"user": "U0TESTUSER1", "ts": "1716500300.000000"}
+  },
+  "previous_message": {
+    "type": "message",
+    "text": "Hello from the test channel :wave:",
+    "user": "U0TESTUSER1",
+    "ts": "1716500000.123456"
+  },
+  "channel": "C0TESTCHAN1",
+  "hidden": true,
+  "ts": "1716500300.000400",
+  "event_ts": "1716500300.000400",
+  "channel_type": "channel"
+}

@@ -1,0 +1,11 @@
+{
+  "type": "message",
+  "subtype": "channel_join",
+  "user": "U0TESTUSER3",
+  "text": "<@U0TESTUSER3> has joined the channel",
+  "inviter": "U0TESTUSER1",
+  "ts": "1716500400.000500",
+  "channel": "C0TESTCHAN1",
+  "event_ts": "1716500400.000500",
+  "channel_type": "channel"
+}

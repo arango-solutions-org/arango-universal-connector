@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets / local state
+.env
+dead_letter.jsonl
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

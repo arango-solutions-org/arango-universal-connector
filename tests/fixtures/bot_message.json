@@ -1,0 +1,11 @@
+{
+  "type": "message",
+  "subtype": "bot_message",
+  "text": "Deploy finished successfully",
+  "bot_id": "B0TESTBOT1",
+  "username": "deploy-bot",
+  "ts": "1716500200.000300",
+  "channel": "C0TESTCHAN1",
+  "event_ts": "1716500200.000300",
+  "channel_type": "channel"
+}

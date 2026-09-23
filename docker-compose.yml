@@ -1,0 +1,33 @@
+services:
+  arangodb:
+    image: arangodb:3.12
+    environment:
+      ARANGO_ROOT_PASSWORD: ${ARANGO_PASSWORD:?set ARANGO_PASSWORD in .env}
+    ports:
+      - "8529:8529"
+    volumes:
+      - arangodb_data:/var/lib/arangodb3
+      - arangodb_apps:/var/lib/arangodb3-apps
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8529/_admin/server/availability || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  connector:
+    build: .
+    env_file: .env
+    environment:
+      ARANGO_HOSTS: http://arangodb:8529
+    depends_on:
+      arangodb:
+        condition: service_healthy
+    volumes:
+      - connector_data:/data
+    restart: unless-stopped
+
+volumes:
+  arangodb_data:
+  arangodb_apps:
+  connector_data:

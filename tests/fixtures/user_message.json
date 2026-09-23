@@ -1,0 +1,26 @@
+{
+  "client_msg_id": "4a1f7c2e-0000-4000-8000-000000000001",
+  "type": "message",
+  "text": "Hello from the test channel :wave:",
+  "user": "U0TESTUSER1",
+  "ts": "1716500000.123456",
+  "blocks": [
+    {
+      "type": "rich_text",
+      "block_id": "abc12",
+      "elements": [
+        {
+          "type": "rich_text_section",
+          "elements": [
+            {"type": "text", "text": "Hello from the test channel "},
+            {"type": "emoji", "name": "wave", "unicode": "1f44b"}
+          ]
+        }
+      ]
+    }
+  ],
+  "team": "T0TESTTEAM",
+  "channel": "C0TESTCHAN1",
+  "event_ts": "1716500000.123456",
+  "channel_type": "channel"
+}
