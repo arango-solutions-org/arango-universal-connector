@@ -35,6 +35,7 @@ def build_arango_sink(settings: Settings) -> Sink:
         password=settings.arango_password.get_secret_value(),
         db_name=settings.arango_db,
         collection_name=settings.arango_collection,
+        retention_days=settings.retention_days,
     )
 
 

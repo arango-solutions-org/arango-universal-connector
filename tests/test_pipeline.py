@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +96,103 @@ def test_dead_letter_failure_does_not_raise(load_event: LoadEvent, tmp_path: Pat
     pipeline = Pipeline(FakeSource(_envelopes(load_event)), FailingSink(), dead_letter)
 
     pipeline.run()  # must still not raise
+
+
+def _aged_line(env: Envelope, days_ago: float) -> str:
+    """One dead-letter line for ``env``, as if the message was posted N days ago."""
+    doc = env.to_document()
+    created_at = datetime.now(UTC) - timedelta(days=days_ago)
+    doc["created_at"] = created_at.isoformat().replace("+00:00", "Z")
+    return json.dumps(doc)
+
+
+def _write_lines(path: Path, lines: list[str]) -> None:
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _keys(path: Path) -> list[str]:
+    return [json.loads(line)["_key"] for line in path.read_text().splitlines()]
+
+
+def test_prune_drops_entries_past_retention(load_event: LoadEvent, tmp_path: Path) -> None:
+    old, recent = _envelopes(load_event)
+    dead_letter = tmp_path / "dl.jsonl"
+    _write_lines(dead_letter, [_aged_line(old, 40), _aged_line(recent, 2)])
+    pipeline = Pipeline(FakeSource([]), RecordingSink(), dead_letter, retention_days=30)
+
+    assert pipeline.prune_dead_letter() == 1
+
+    assert _keys(dead_letter) == [recent.key]
+    assert not (tmp_path / "dl.jsonl.tmp").exists()
+
+
+def test_prune_is_a_no_op_when_retention_disabled(load_event: LoadEvent, tmp_path: Path) -> None:
+    old, _ = _envelopes(load_event)
+    dead_letter = tmp_path / "dl.jsonl"
+    _write_lines(dead_letter, [_aged_line(old, 400)])
+    pipeline = Pipeline(FakeSource([]), RecordingSink(), dead_letter, retention_days=0)
+
+    assert pipeline.prune_dead_letter() == 0
+    assert _keys(dead_letter) == [old.key]
+
+
+def test_prune_leaves_file_untouched_when_nothing_expires(
+    load_event: LoadEvent, tmp_path: Path
+) -> None:
+    _, recent = _envelopes(load_event)
+    dead_letter = tmp_path / "dl.jsonl"
+    _write_lines(dead_letter, [_aged_line(recent, 1)])
+    before = dead_letter.read_text()
+    pipeline = Pipeline(FakeSource([]), RecordingSink(), dead_letter, retention_days=30)
+
+    assert pipeline.prune_dead_letter() == 0
+    assert dead_letter.read_text() == before
+
+
+def test_prune_keeps_unreadable_lines(load_event: LoadEvent, tmp_path: Path) -> None:
+    old, recent = _envelopes(load_event)
+    dead_letter = tmp_path / "dl.jsonl"
+    _write_lines(
+        dead_letter,
+        [_aged_line(old, 40), "{truncated half-written line", _aged_line(recent, 1)],
+    )
+    pipeline = Pipeline(FakeSource([]), RecordingSink(), dead_letter, retention_days=30)
+
+    assert pipeline.prune_dead_letter() == 1
+
+    lines = dead_letter.read_text().splitlines()
+    assert lines[0] == "{truncated half-written line"
+    assert json.loads(lines[1])["_key"] == recent.key
+
+
+def test_prune_handles_missing_file(tmp_path: Path) -> None:
+    pipeline = Pipeline(
+        FakeSource([]), RecordingSink(), tmp_path / "absent.jsonl", retention_days=30
+    )
+    assert pipeline.prune_dead_letter() == 0
+
+
+def test_run_prunes_at_startup_and_shutdown_stops_the_thread(
+    load_event: LoadEvent, tmp_path: Path
+) -> None:
+    old, recent = _envelopes(load_event)
+    dead_letter = tmp_path / "dl.jsonl"
+    _write_lines(dead_letter, [_aged_line(old, 40), _aged_line(recent, 1)])
+    pipeline = Pipeline(FakeSource([]), RecordingSink(), dead_letter, retention_days=30)
+
+    pipeline.run()
+    assert _keys(dead_letter) == [recent.key]
+
+    pipeline.shutdown()
+    assert pipeline._prune_thread is not None
+    assert not pipeline._prune_thread.is_alive()
+
+
+def test_no_prune_thread_when_retention_disabled(tmp_path: Path) -> None:
+    pipeline = Pipeline(FakeSource([]), RecordingSink(), tmp_path / "dl.jsonl", retention_days=0)
+    pipeline.run()
+    pipeline.shutdown()
+    assert pipeline._prune_thread is None
 
 
 def test_shutdown_stops_source_then_closes_sink_once(tmp_path: Path) -> None:

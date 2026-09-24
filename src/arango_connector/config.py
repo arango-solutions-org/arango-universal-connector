@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     arango_password: SecretStr
     arango_db: str = "connector"
     arango_collection: str = "messages"
+    # Days to keep messages, counted from when they were posted. 0 disables retention.
+    retention_days: int = Field(default=30, ge=0)
 
     dead_letter_path: Path = Path("./dead_letter.jsonl")
     log_level: str = "INFO"

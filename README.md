@@ -17,10 +17,14 @@ Slack (Socket Mode) ──► SlackSocketModeAdapter ──► normalize() ─�
 
 - Ingests new messages, including thread replies, bot messages and thread
   broadcasts, from an allowlist of channel IDs.
-- Skips edits, deletes, joins and other subtypes (these are planned for later).
+- Applies edits over the stored message, so an edited message is not left showing
+  its original text. See [Edits](#edits).
+- Skips deletes, joins and other subtypes (these are planned for later).
 - Writes one document per message into `connector/messages`. Documents are keyed
   `slack_{channel_id}_{ts}`, and writes use upsert semantics, so Slack re-delivering
   a message never creates a duplicate.
+- Deletes messages `RETENTION_DAYS` days after they were posted, 30 by default, from
+  both ArangoDB and the dead-letter file. See [Retention](#retention).
 - Creates the database, collection and indexes on startup (idempotent).
 - Retries failed writes (3 attempts, exponential backoff). If a write still fails,
   the message is appended to a dead-letter JSONL file instead of being lost.
@@ -94,6 +98,7 @@ All settings come from environment variables or `.env`.
 | `ARANGO_PASSWORD`   | yes      | —                       | Also the ArangoDB root password in Compose |
 | `ARANGO_DB`         | no       | `connector`             |                                          |
 | `ARANGO_COLLECTION` | no       | `messages`              |                                          |
+| `RETENTION_DAYS`    | no       | `30`                    | Delete messages this many days after they were posted, in ArangoDB and the dead-letter file; `0` disables |
 | `DEAD_LETTER_PATH`  | no       | `./dead_letter.jsonl`   | `/data/dead_letter.jsonl` in Docker      |
 | `LOG_LEVEL`         | no       | `INFO`                  |                                          |
 
@@ -105,12 +110,44 @@ missing. Tokens and passwords are held as `SecretStr` and are never logged.
 > password in ArangoDB too or reset the volume with `docker compose down -v`
 > (this deletes all stored data).
 
+## Retention
+
+Messages are deleted `RETENTION_DAYS` days after they were **posted** (not after they
+were ingested), enforced by an ArangoDB TTL index on `created_at`. The default is 30
+days. Set `RETENTION_DAYS=0` to keep messages forever.
+
+> **Warning:** retention is on by default. If you are upgrading an existing deployment,
+> the first start after this change deletes everything already older than
+> `RETENTION_DAYS`, in both the collection and the dead-letter file. This is not
+> reversible. Set `RETENTION_DAYS=0` before starting if you want to keep that data.
+
+Startup logs `arango_ttl_index_created` at WARNING whenever it creates or changes the
+index, so a surprising retention window is visible in the logs.
+
+Deletion is swept by a background thread rather than happening at the exact moment a
+message ages out, so treat the window as "removed within `RETENTION_DAYS` days".
+
+Changing `RETENTION_DAYS` is safe: ArangoDB allows only one TTL index per collection,
+so the connector drops the old index and creates the new one on startup. An unchanged
+window leaves the existing index alone.
+
+The same window applies to the dead-letter file, which the TTL index cannot reach.
+The connector prunes it once at startup and hourly thereafter, dropping entries whose
+`created_at` is past the window. Pruning rewrites the file through a temporary file, so
+an interrupted prune cannot truncate it, and a line too corrupt to parse is kept rather
+than discarded (with a `dead_letter_prune_unreadable` warning) so a bad write surfaces
+instead of vanishing.
+
+One caveat worth repeating: retention is time-based, so it is not a substitute for
+honouring a deletion. A message you delete in Slack still sits in ArangoDB until its
+window elapses.
+
 ## Document shape
 
 ```json
 {
   "_key": "slack_C0123ABC_1716500000.123456",
-  "schema_version": 1,
+  "schema_version": 2,
   "source": "slack",
   "workspace_id": "T0123ABC",
   "channel_id": "C0123ABC",
@@ -119,6 +156,7 @@ missing. Tokens and passwords are held as `SecretStr` and are never logged.
   "text": "Hello!",
   "source_ts": "1716500000.123456",
   "created_at": "2024-05-23T21:33:20.123456Z",
+  "edited_at": null,
   "thread_parent": null,
   "ingested_at": "2026-09-23T19:30:00.000000Z",
   "raw": { "...": "the original Slack event, unmodified" }
@@ -129,9 +167,24 @@ missing. Tokens and passwords are held as `SecretStr` and are never logged.
   carry a `bot_id`; `author_id` is then the `bot_id`.
 - `thread_parent` is the parent's `ts` for thread replies, and `null` for top-level
   messages (including a thread's root message).
+- `edited_at` is the time of the most recent edit, or `null` if the message has never
+  been edited.
 
 Persistent indexes are created on `[channel_id, created_at]` and
 `[source, workspace_id, channel_id]`.
+
+## Edits
+
+Editing a message in Slack overwrites the stored document. The edit is keyed on the
+original message's `ts`, so it lands on the existing document rather than creating a
+new one, and `edited_at` is set.
+
+Because the whole document is replaced, content the edit removed does not survive
+anywhere — including inside `raw`, which holds only the edited message. Slack's
+`message_changed` payload also carries a `previous_message` with the pre-edit text;
+that is deliberately discarded rather than stored.
+
+Deletes are still not handled: see [Not yet supported](#not-yet-supported).
 
 ## Dead-letter file
 
@@ -140,6 +193,9 @@ the document is appended as one JSON line to `DEAD_LETTER_PATH` and an
 `envelope_write_failed` error is logged. The listener keeps running. Because writes
 are idempotent, dead-lettered documents can be safely replayed later. There is no
 replay tool yet.
+
+This file holds full message content, so it is covered by `RETENTION_DAYS` too. See
+[Retention](#retention).
 
 ## Development
 
@@ -190,7 +246,10 @@ src/arango_connector/
 These are deliberately out of scope for the MVP. Look for `TODO(future):` comments at
 the extension points.
 
-- Historical backfill (`conversations.history`), edits, deletes, reactions and files.
+- Deletes. A message deleted in Slack stays in ArangoDB until `RETENTION_DAYS`
+  elapses. Handling them needs a delete operation on `Envelope` and `Sink`, which
+  today only express "write this document".
+- Historical backfill (`conversations.history`), reactions and files.
 - Graph modeling (users/channels collections, edges) and ArangoSearch.
 - Queues, batching, and a dead-letter collection.
 - Other sources, OAuth install flow, multi-workspace support, and an admin UI.

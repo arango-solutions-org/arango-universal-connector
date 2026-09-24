@@ -75,11 +75,24 @@ def test_skipped_subtype_is_not_emitted(
 ) -> None:
     emitted: list[Envelope] = []
     slack_adapter._emit = emitted.append
-    event = load_event("message_changed")
+    event = load_event("channel_join")
 
     slack_adapter._on_message(event, _event_callback(event))
 
     assert emitted == []
+
+
+def test_edit_is_emitted_against_the_original_key(
+    slack_adapter: SlackSocketModeAdapter, load_event: LoadEvent
+) -> None:
+    emitted: list[Envelope] = []
+    slack_adapter._emit = emitted.append
+    event = load_event("message_changed")
+
+    slack_adapter._on_message(event, _event_callback(event))
+
+    assert [e.key for e in emitted] == ["slack_C0TESTCHAN1_1716500000.123456"]
+    assert emitted[0].text == "Hello from the test channel (edited)"
 
 
 def test_emit_failure_is_swallowed(

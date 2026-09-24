@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from arango_connector.envelope import Envelope
@@ -13,12 +15,29 @@ from arango_connector.sources.base import SourceAdapter
 
 logger = logging.getLogger(__name__)
 
+# How often the dead-letter file is re-checked while the connector runs. The sink's
+# TTL index is swept by ArangoDB itself; the file has no equivalent, so we sweep it.
+PRUNE_INTERVAL_SECONDS = 3600
+
+
+def _created_at(line: str) -> datetime | None:
+    """Read ``created_at`` from one dead-letter line, or ``None`` if unreadable."""
+    try:
+        parsed = datetime.fromisoformat(json.loads(line)["created_at"])
+    except (ValueError, TypeError, KeyError):
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
 
 class Pipeline:
     """Forwards every Envelope emitted by a source to a sink.
 
+    Also applies ``retention_days`` to the dead-letter file, which the sink's TTL index
+    cannot reach.
+
     TODO(future): put a queue between source and sink and batch writes; replace the
-    dead-letter file with a dead-letter collection.
+    dead-letter file with a dead-letter collection, which would let the TTL index cover
+    it and make this pruning unnecessary.
     """
 
     def __init__(
@@ -26,17 +45,24 @@ class Pipeline:
         source: SourceAdapter,
         sink: Sink,
         dead_letter_path: Path | str = "./dead_letter.jsonl",
+        retention_days: int = 0,
+        prune_interval_seconds: float = PRUNE_INTERVAL_SECONDS,
     ) -> None:
         self.source = source
         self.sink = sink
         self.dead_letter_path = Path(dead_letter_path)
+        self.retention_days = retention_days
+        self._prune_interval = prune_interval_seconds
         self._dead_letter_lock = threading.Lock()
         self._shutdown_lock = threading.Lock()
         self._shut_down = False
+        self._prune_stopped = threading.Event()
+        self._prune_thread: threading.Thread | None = None
 
     def run(self) -> None:
         """Prepare the sink, then start the source. Blocks until the source stops."""
         self.sink.setup()
+        self._start_pruning()
         logger.info(
             "pipeline_starting source=%s sink=%s", self.source.name, type(self.sink).__name__
         )
@@ -68,13 +94,92 @@ class Pipeline:
             # Last line of defence: the source loop must never crash.
             logger.exception("dead_letter_write_failed key=%s", envelope.key)
 
+    # -- dead-letter retention ---------------------------------------------
+
+    def _start_pruning(self) -> None:
+        """Prune once, then keep pruning on an interval for as long as we run."""
+        if self.retention_days <= 0:
+            return
+        self.prune_dead_letter()
+        self._prune_thread = threading.Thread(
+            target=self._prune_loop, name="dead-letter-prune", daemon=True
+        )
+        self._prune_thread.start()
+
+    def _prune_loop(self) -> None:
+        while not self._prune_stopped.wait(self._prune_interval):
+            self.prune_dead_letter()
+
+    def prune_dead_letter(self) -> int:
+        """Drop dead-lettered documents older than the retention window.
+
+        Returns the number of entries removed. Retention is measured from a message's
+        ``created_at``, matching the sink's TTL index, so a dead-lettered message ages
+        out at the same time as it would have in ArangoDB. Never raises: losing the
+        prune must not take the connector down.
+        """
+        if self.retention_days <= 0:
+            return 0
+        cutoff = datetime.now(UTC) - timedelta(days=self.retention_days)
+        try:
+            with self._dead_letter_lock:
+                return self._prune_locked(cutoff)
+        except Exception:
+            logger.exception("dead_letter_prune_failed path=%s", self.dead_letter_path)
+            return 0
+
+    def _prune_locked(self, cutoff: datetime) -> int:
+        if not self.dead_letter_path.is_file():
+            return 0
+
+        kept: list[str] = []
+        removed = 0
+        unreadable = 0
+        with self.dead_letter_path.open(encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                created_at = _created_at(line)
+                if created_at is not None and created_at < cutoff:
+                    removed += 1
+                    continue
+                # A line we cannot read is kept rather than silently destroyed; a
+                # corrupt half-write should surface as a warning, not as data loss.
+                unreadable += created_at is None
+                kept.append(line if line.endswith("\n") else line + "\n")
+
+        if unreadable:
+            logger.warning(
+                "dead_letter_prune_unreadable path=%s lines=%s", self.dead_letter_path, unreadable
+            )
+        if not removed:
+            return 0
+
+        # Rewrite via a temp file so a crash mid-prune cannot truncate the original.
+        tmp = self.dead_letter_path.with_name(self.dead_letter_path.name + ".tmp")
+        with tmp.open("w", encoding="utf-8") as fh:
+            fh.writelines(kept)
+        os.replace(tmp, self.dead_letter_path)
+
+        logger.info(
+            "dead_letter_pruned path=%s removed=%s kept=%s retention_days=%s",
+            self.dead_letter_path,
+            removed,
+            len(kept),
+            self.retention_days,
+        )
+        return removed
+
     def shutdown(self) -> None:
-        """Stop the source, then close the sink. Safe to call more than once."""
+        """Stop pruning and the source, then close the sink. Safe to call more than once."""
         with self._shutdown_lock:
             if self._shut_down:
                 return
             self._shut_down = True
         logger.info("pipeline_shutting_down")
+        self._prune_stopped.set()
+        if self._prune_thread is not None:
+            self._prune_thread.join(timeout=5)
         try:
             self.source.stop()
         except Exception:

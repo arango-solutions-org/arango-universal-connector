@@ -56,6 +56,7 @@ def main() -> int:
             source=build_source(settings),
             sink=build_sink(settings),
             dead_letter_path=settings.dead_letter_path,
+            retention_days=settings.retention_days,
         )
     except Exception:
         logger.exception("pipeline_build_failed")

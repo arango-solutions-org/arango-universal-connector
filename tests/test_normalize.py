@@ -26,7 +26,8 @@ def test_user_message_field_mapping(load_event: LoadEvent) -> None:
 
     assert env is not None
     assert env.key == "slack_C0TESTCHAN1_1716500000.123456"
-    assert env.schema_version == 1
+    assert env.schema_version == 2
+    assert env.edited_at is None
     assert env.source == "slack"
     assert env.workspace_id == TEAM_ID
     assert env.channel_id == "C0TESTCHAN1"
@@ -88,9 +89,70 @@ def test_app_bot_without_subtype_is_bot(load_event: LoadEvent) -> None:
     assert env.author_id == "B0TESTBOT2"
 
 
-@pytest.mark.parametrize("name", ["message_changed", "channel_join"])
-def test_skipped_subtypes_return_none(load_event: LoadEvent, name: str) -> None:
-    assert normalize(load_event(name), TEAM_ID) is None
+def test_edit_keys_to_the_original_message(load_event: LoadEvent) -> None:
+    env = normalize(load_event("message_changed"), TEAM_ID)
+
+    assert env is not None
+    # The edit's own ts (1716500300.000400) must not leak into the key.
+    assert env.key == "slack_C0TESTCHAN1_1716500000.123456"
+    assert env.source_ts == "1716500000.123456"
+    assert env.created_at == datetime(2024, 5, 23, 21, 33, 20, 123456, tzinfo=UTC)
+    assert env.channel_id == "C0TESTCHAN1"
+    assert env.author_id == "U0TESTUSER1"
+    assert env.author_type == "user"
+
+
+def test_edit_stores_the_new_text_and_edited_at(load_event: LoadEvent) -> None:
+    env = normalize(load_event("message_changed"), TEAM_ID)
+
+    assert env is not None
+    assert env.text == "Hello from the test channel (edited)"
+    assert env.edited_at == datetime(2024, 5, 23, 21, 38, 20, tzinfo=UTC)
+
+
+def test_edit_raw_drops_the_pre_edit_text(load_event: LoadEvent) -> None:
+    env = normalize(load_event("message_changed"), TEAM_ID)
+
+    assert env is not None
+    assert "previous_message" not in env.raw
+    assert "Hello from the test channel :wave:" not in json.dumps(env.raw)
+
+
+def test_edit_does_not_mutate_input(load_event: LoadEvent) -> None:
+    event = load_event("message_changed")
+    original = copy.deepcopy(event)
+    normalize(event, TEAM_ID)
+    assert event == original
+
+
+def test_bot_edit_stays_a_bot(load_event: LoadEvent) -> None:
+    event = load_event("message_changed")
+    event["message"]["subtype"] = "bot_message"
+    event["message"]["bot_id"] = "B0TESTBOT1"
+    del event["message"]["user"]
+
+    env = normalize(event, TEAM_ID)
+    assert env is not None
+    assert env.author_type == "bot"
+    assert env.author_id == "B0TESTBOT1"
+
+
+def test_edit_falls_back_to_outer_team(load_event: LoadEvent) -> None:
+    event = load_event("message_changed")
+    event["team"] = "T0OUTERTEAM"
+    env = normalize(event, None)
+    assert env is not None
+    assert env.workspace_id == "T0OUTERTEAM"
+
+
+def test_edit_without_inner_message_returns_none(load_event: LoadEvent) -> None:
+    event = load_event("message_changed")
+    del event["message"]
+    assert normalize(event, TEAM_ID) is None
+
+
+def test_skipped_subtypes_return_none(load_event: LoadEvent) -> None:
+    assert normalize(load_event("channel_join"), TEAM_ID) is None
 
 
 @pytest.mark.parametrize("subtype", ["message_deleted", "channel_leave", "channel_topic"])

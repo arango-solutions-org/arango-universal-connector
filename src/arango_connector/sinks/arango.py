@@ -31,6 +31,25 @@ INDEXES: tuple[tuple[str, ...], ...] = (
     ("source", "workspace_id", "channel_id"),
 )
 
+# Retention is enforced by a TTL index on the message timestamp, so the window is
+# measured from when a message was posted rather than when it was ingested.
+TTL_FIELD = "created_at"
+SECONDS_PER_DAY = 86400
+
+
+def ttl_expiry_seconds(index: dict[str, Any]) -> int | None:
+    """Read a TTL index's window, whichever spelling the driver used.
+
+    ``add_index`` echoes ArangoDB's ``expireAfter``, but ``indexes()`` renames it to
+    ``expiry_time``. Reading only one of them silently never matches, which would make
+    reconciliation drop and recreate the index on every start.
+    """
+    for key in ("expiry_time", "expireAfter"):
+        value = index.get(key)
+        if isinstance(value, int):
+            return value
+    return None
+
 
 class ArangoWriteError(Exception):
     """One or more documents in a batch failed to write."""
@@ -60,9 +79,11 @@ def _is_retryable(exc: BaseException) -> bool:
 class ArangoSink(Sink):
     """Writes Envelopes into a single ArangoDB document collection.
 
-    Idempotency comes from the deterministic ``_key`` plus ``overwrite_mode="update"``:
-    re-delivering the same message updates the existing document instead of
-    creating a duplicate.
+    Idempotency comes from the deterministic ``_key`` plus ``overwrite_mode="replace"``:
+    re-delivering the same message overwrites the existing document instead of
+    creating a duplicate. Replace rather than update because an Envelope is always a
+    whole document: update merges nested objects, so keys an edit removed from ``raw``
+    would otherwise survive the write.
     """
 
     def __init__(
@@ -73,6 +94,7 @@ class ArangoSink(Sink):
         db_name: str,
         collection_name: str,
         *,
+        retention_days: int = 0,
         retry_attempts: int = 3,
         retry_wait_initial: float = 0.5,
         retry_wait_max: float = 5.0,
@@ -80,6 +102,7 @@ class ArangoSink(Sink):
         self.hosts = hosts
         self.db_name = db_name
         self.collection_name = collection_name
+        self.retention_days = retention_days
         self._username = username
         self._password = password
         self._retry_attempts = retry_attempts
@@ -92,7 +115,10 @@ class ArangoSink(Sink):
     # -- lifecycle ---------------------------------------------------------
 
     def setup(self) -> None:
-        """Create the database, collection and indexes if missing. Idempotent."""
+        """Create the database, collection and indexes if missing. Idempotent.
+
+        Also reconciles the retention TTL index, which can delete existing documents.
+        """
         self._client = ArangoClient(hosts=self.hosts)
         sys_db = self._client.db("_system", username=self._username, password=self._password)
 
@@ -122,12 +148,57 @@ class ArangoSink(Sink):
                     "arango_index_created collection=%s fields=%s", self.collection_name, fields
                 )
 
+        self._reconcile_ttl_index(collection)
+
         self._collection = collection
         logger.info(
-            "arango_sink_ready hosts=%s db=%s collection=%s",
+            "arango_sink_ready hosts=%s db=%s collection=%s retention_days=%s",
             self.hosts,
             self.db_name,
             self.collection_name,
+            self.retention_days,
+        )
+
+    def _reconcile_ttl_index(self, collection: StandardCollection) -> None:
+        """Make the collection's TTL index match ``retention_days``.
+
+        ArangoDB allows at most one TTL index per collection, so changing the
+        retention window means dropping the old index before adding the new one;
+        ``add_index`` alone would fail once ``expireAfter`` differs.
+        """
+        desired = self.retention_days * SECONDS_PER_DAY if self.retention_days > 0 else None
+        indexes = collection.indexes()
+        # Not a list only for async/batch execution, which this sink never uses.
+        if not isinstance(indexes, list):
+            indexes = []
+        existing = [idx for idx in indexes if idx["type"] == "ttl"]
+
+        if (
+            desired is not None
+            and len(existing) == 1
+            and existing[0]["fields"] == [TTL_FIELD]
+            and ttl_expiry_seconds(existing[0]) == desired
+        ):
+            return
+
+        for idx in existing:
+            collection.delete_index(idx["id"])
+            logger.info(
+                "arango_ttl_index_dropped collection=%s fields=%s",
+                self.collection_name,
+                idx["fields"],
+            )
+
+        if desired is None:
+            return
+
+        collection.add_index({"type": "ttl", "fields": [TTL_FIELD], "expireAfter": desired})
+        logger.warning(
+            "arango_ttl_index_created collection=%s field=%s retention_days=%s "
+            "documents older than this are removed",
+            self.collection_name,
+            TTL_FIELD,
+            self.retention_days,
         )
 
     def close(self) -> None:
@@ -155,9 +226,9 @@ class ArangoSink(Sink):
     def _write_once(self, docs: list[dict[str, Any]]) -> None:
         collection = self._require_collection()
         if len(docs) == 1:
-            collection.insert(docs[0], overwrite_mode="update", silent=True)
+            collection.insert(docs[0], overwrite_mode="replace", silent=True)
             return
-        results = collection.insert_many(docs, overwrite_mode="update")
+        results = collection.insert_many(docs, overwrite_mode="replace")
         if isinstance(results, list):
             errors = [r for r in results if isinstance(r, ArangoServerError)]
             if errors:
