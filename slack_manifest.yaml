@@ -11,6 +11,7 @@ oauth_config:
       - groups:history
       - channels:read
       - groups:read
+      - users:read
 settings:
   event_subscriptions:
     bot_events:

@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def make_key(source: str, channel_id: str, source_ts: str) -> str:
@@ -31,6 +31,7 @@ class Envelope(BaseModel):
     workspace_id: str | None = None
     channel_id: str
     author_id: str | None = None
+    author_name: str | None = None
     author_type: Literal["user", "bot"]
     text: str = ""
     source_ts: str

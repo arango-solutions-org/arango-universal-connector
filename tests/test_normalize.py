@@ -26,12 +26,13 @@ def test_user_message_field_mapping(load_event: LoadEvent) -> None:
 
     assert env is not None
     assert env.key == "slack_C0TESTCHAN1_1716500000.123456"
-    assert env.schema_version == 2
+    assert env.schema_version == 3
     assert env.edited_at is None
     assert env.source == "slack"
     assert env.workspace_id == TEAM_ID
     assert env.channel_id == "C0TESTCHAN1"
     assert env.author_id == "U0TESTUSER1"
+    assert env.author_name is None  # resolved by the adapter, not here
     assert env.author_type == "user"
     assert env.text == "Hello from the test channel :wave:"
     assert env.source_ts == "1716500000.123456"
@@ -77,16 +78,19 @@ def test_bot_message(load_event: LoadEvent) -> None:
     assert env is not None
     assert env.author_type == "bot"
     assert env.author_id == "B0TESTBOT1"
+    assert env.author_name == "deploy-bot"
     assert env.text == "Deploy finished successfully"
 
 
 def test_app_bot_without_subtype_is_bot(load_event: LoadEvent) -> None:
     event = load_event("user_message")
     event["bot_id"] = "B0TESTBOT2"
+    event["bot_profile"] = {"id": "B0TESTBOT2", "name": "Release Bot"}
     env = normalize(event, TEAM_ID)
     assert env is not None
     assert env.author_type == "bot"
     assert env.author_id == "B0TESTBOT2"
+    assert env.author_name == "Release Bot"
 
 
 def test_edit_keys_to_the_original_message(load_event: LoadEvent) -> None:

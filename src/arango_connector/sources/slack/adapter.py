@@ -8,6 +8,7 @@ from typing import Any
 
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
+from slack_sdk.errors import SlackApiError
 
 from arango_connector.sources.base import EmitFn, SourceAdapter
 from arango_connector.sources.slack.normalize import normalize
@@ -31,6 +32,9 @@ class SlackSocketModeAdapter(SourceAdapter):
         self._emit: EmitFn | None = None
         self._handler: SocketModeHandler | None = None
         self._stopped = threading.Event()
+        # TODO(future): refresh on "user_change" events; a renamed user keeps the old
+        # name until restart.
+        self._user_names: dict[str, str | None] = {}
 
         self.app = App(token=bot_token)
         self.app.event("message")(self._on_message)
@@ -48,6 +52,9 @@ class SlackSocketModeAdapter(SourceAdapter):
                     "slack_event_skipped channel=%s subtype=%s", channel, event.get("subtype")
                 )
                 return
+            if envelope.author_type == "user" and envelope.author_id:
+                name = self._resolve_user_name(envelope.author_id)
+                envelope = envelope.model_copy(update={"author_name": name})
             if self._emit is None:
                 logger.warning("slack_event_dropped reason=not_started key=%s", envelope.key)
                 return
@@ -56,6 +63,29 @@ class SlackSocketModeAdapter(SourceAdapter):
             logger.exception(
                 "slack_event_handler_failed channel=%s ts=%s", event.get("channel"), event.get("ts")
             )
+
+    def _resolve_user_name(self, user_id: str) -> str | None:
+        """Return the user's ``real_name`` via ``users.info``, cached per user.
+
+        A failed lookup returns ``None`` without caching, so the message is still
+        stored and the next message from that user retries.
+        """
+        if user_id in self._user_names:
+            return self._user_names[user_id]
+        try:
+            response = self.app.client.users_info(user=user_id)
+        except SlackApiError as exc:
+            logger.warning(
+                "slack_user_lookup_failed user=%s error=%s", user_id, exc.response.get("error")
+            )
+            return None
+        except Exception:
+            logger.warning("slack_user_lookup_failed user=%s", user_id, exc_info=True)
+            return None
+        user = response.get("user") or {}
+        name = user.get("real_name") or (user.get("profile") or {}).get("real_name") or None
+        self._user_names[user_id] = name
+        return name
 
     def start(self, emit: EmitFn) -> None:
         """Connect over Socket Mode and block until :meth:`stop` is called.

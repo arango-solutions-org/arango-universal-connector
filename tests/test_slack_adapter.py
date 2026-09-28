@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from slack_bolt import App, BoltRequest
 from slack_bolt.authorization import AuthorizeResult
+from slack_sdk.errors import SlackApiError
 
 from arango_connector.envelope import Envelope
 from arango_connector.sources.slack import adapter as adapter_module
@@ -31,7 +32,23 @@ def slack_adapter(monkeypatch: pytest.MonkeyPatch) -> SlackSocketModeAdapter:
         )
 
     monkeypatch.setattr(adapter_module, "App", lambda token: App(authorize=authorize))
-    return SlackSocketModeAdapter("xoxb-fake", "xapp-fake", {WATCHED})
+    adapter = SlackSocketModeAdapter("xoxb-fake", "xapp-fake", {WATCHED})
+    monkeypatch.setattr(adapter.app.client, "users_info", FakeUsersInfo())
+    return adapter
+
+
+class FakeUsersInfo:
+    """Stands in for ``WebClient.users_info``, recording the users looked up."""
+
+    def __init__(self, error: str | None = None) -> None:
+        self.error = error
+        self.calls: list[str] = []
+
+    def __call__(self, *, user: str) -> dict[str, Any]:
+        self.calls.append(user)
+        if self.error:
+            raise SlackApiError(self.error, {"ok": False, "error": self.error})
+        return {"ok": True, "user": {"id": user, "real_name": f"Real {user}"}}
 
 
 def _event_callback(event: dict[str, Any]) -> dict[str, Any]:
@@ -56,6 +73,63 @@ def test_watched_channel_is_emitted(
 
     assert [e.key for e in emitted] == ["slack_C0TESTCHAN1_1716500000.123456"]
     assert emitted[0].workspace_id == "T0TESTTEAM"
+
+
+def test_user_message_gets_real_name(
+    slack_adapter: SlackSocketModeAdapter, load_event: LoadEvent
+) -> None:
+    emitted: list[Envelope] = []
+    slack_adapter._emit = emitted.append
+    event = load_event("user_message")
+
+    slack_adapter._on_message(event, _event_callback(event))
+
+    assert emitted[0].author_name == "Real U0TESTUSER1"
+
+
+def test_user_name_lookup_is_cached(
+    slack_adapter: SlackSocketModeAdapter, load_event: LoadEvent
+) -> None:
+    emitted: list[Envelope] = []
+    slack_adapter._emit = emitted.append
+    event = load_event("user_message")
+
+    slack_adapter._on_message(event, _event_callback(event))
+    slack_adapter._on_message(event, _event_callback(event))
+
+    assert [e.author_name for e in emitted] == ["Real U0TESTUSER1"] * 2
+    assert slack_adapter.app.client.users_info.calls == ["U0TESTUSER1"]
+
+
+def test_failed_name_lookup_still_emits_and_retries(
+    slack_adapter: SlackSocketModeAdapter,
+    load_event: LoadEvent,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lookup = FakeUsersInfo(error="missing_scope")
+    monkeypatch.setattr(slack_adapter.app.client, "users_info", lookup)
+    emitted: list[Envelope] = []
+    slack_adapter._emit = emitted.append
+    event = load_event("user_message")
+
+    slack_adapter._on_message(event, _event_callback(event))
+    slack_adapter._on_message(event, _event_callback(event))
+
+    assert [e.author_name for e in emitted] == [None, None]
+    assert lookup.calls == ["U0TESTUSER1", "U0TESTUSER1"]
+
+
+def test_bot_message_skips_name_lookup(
+    slack_adapter: SlackSocketModeAdapter, load_event: LoadEvent
+) -> None:
+    emitted: list[Envelope] = []
+    slack_adapter._emit = emitted.append
+    event = load_event("bot_message")
+
+    slack_adapter._on_message(event, _event_callback(event))
+
+    assert emitted[0].author_name == "deploy-bot"
+    assert slack_adapter.app.client.users_info.calls == []
 
 
 def test_unwatched_channel_is_ignored(

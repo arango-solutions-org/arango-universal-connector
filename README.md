@@ -147,11 +147,12 @@ window elapses.
 ```json
 {
   "_key": "slack_C0123ABC_1716500000.123456",
-  "schema_version": 2,
+  "schema_version": 3,
   "source": "slack",
   "workspace_id": "T0123ABC",
   "channel_id": "C0123ABC",
   "author_id": "U0123ABC",
+  "author_name": "Ada Lovelace",
   "author_type": "user",
   "text": "Hello!",
   "source_ts": "1716500000.123456",
@@ -165,6 +166,10 @@ window elapses.
 
 - `author_type` is `"bot"` for `bot_message` events and for app-bot posts that
   carry a `bot_id`; `author_id` is then the `bot_id`.
+- `author_name` is the Slack user's `real_name`, looked up with `users.info` (needs
+  the `users:read` scope) and cached per user until the connector restarts, so a
+  rename is picked up only after a restart. For bots it is the bot's `username` or
+  `bot_profile.name`. It is `null` if the lookup fails; the message is still stored.
 - `thread_parent` is the parent's `ts` for thread replies, and `null` for top-level
   messages (including a thread's root message).
 - `edited_at` is the time of the most recent edit, or `null` if the message has never
