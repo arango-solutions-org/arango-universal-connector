@@ -1,1 +1,1 @@
-"""Source adapters: turn external streams and APIs into Records."""
+"""Source adapters: turn external streams and APIs into Envelopes."""

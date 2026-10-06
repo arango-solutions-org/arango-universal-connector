@@ -11,7 +11,7 @@ from slack_bolt import App, BoltRequest
 from slack_bolt.authorization import AuthorizeResult
 from slack_sdk.errors import SlackApiError
 
-from arango_connector.record import Record
+from arango_connector.envelope import Envelope
 from arango_connector.sources.slack import adapter as adapter_module
 from arango_connector.sources.slack.adapter import SlackSocketModeAdapter
 
@@ -65,7 +65,7 @@ def _event_callback(event: dict[str, Any]) -> dict[str, Any]:
 def test_watched_channel_is_emitted(
     slack_adapter: SlackSocketModeAdapter, load_event: LoadEvent
 ) -> None:
-    emitted: list[Record[Any]] = []
+    emitted: list[Envelope[Any]] = []
     slack_adapter._emit = emitted.append
     event = load_event("user_message")
 
@@ -78,7 +78,7 @@ def test_watched_channel_is_emitted(
 def test_user_message_gets_real_name(
     slack_adapter: SlackSocketModeAdapter, load_event: LoadEvent
 ) -> None:
-    emitted: list[Record[Any]] = []
+    emitted: list[Envelope[Any]] = []
     slack_adapter._emit = emitted.append
     event = load_event("user_message")
 
@@ -90,7 +90,7 @@ def test_user_message_gets_real_name(
 def test_user_name_lookup_is_cached(
     slack_adapter: SlackSocketModeAdapter, load_event: LoadEvent
 ) -> None:
-    emitted: list[Record[Any]] = []
+    emitted: list[Envelope[Any]] = []
     slack_adapter._emit = emitted.append
     event = load_event("user_message")
 
@@ -108,7 +108,7 @@ def test_failed_name_lookup_still_emits_and_retries(
 ) -> None:
     lookup = FakeUsersInfo(error="missing_scope")
     monkeypatch.setattr(slack_adapter.app.client, "users_info", lookup)
-    emitted: list[Record[Any]] = []
+    emitted: list[Envelope[Any]] = []
     slack_adapter._emit = emitted.append
     event = load_event("user_message")
 
@@ -122,7 +122,7 @@ def test_failed_name_lookup_still_emits_and_retries(
 def test_bot_message_skips_name_lookup(
     slack_adapter: SlackSocketModeAdapter, load_event: LoadEvent
 ) -> None:
-    emitted: list[Record[Any]] = []
+    emitted: list[Envelope[Any]] = []
     slack_adapter._emit = emitted.append
     event = load_event("bot_message")
 
@@ -135,7 +135,7 @@ def test_bot_message_skips_name_lookup(
 def test_unwatched_channel_is_ignored(
     slack_adapter: SlackSocketModeAdapter, load_event: LoadEvent
 ) -> None:
-    emitted: list[Record[Any]] = []
+    emitted: list[Envelope[Any]] = []
     slack_adapter._emit = emitted.append
     event = load_event("user_message") | {"channel": "C0OTHERCHAN"}
 
@@ -147,7 +147,7 @@ def test_unwatched_channel_is_ignored(
 def test_skipped_subtype_is_not_emitted(
     slack_adapter: SlackSocketModeAdapter, load_event: LoadEvent
 ) -> None:
-    emitted: list[Record[Any]] = []
+    emitted: list[Envelope[Any]] = []
     slack_adapter._emit = emitted.append
     event = load_event("channel_join")
 
@@ -159,7 +159,7 @@ def test_skipped_subtype_is_not_emitted(
 def test_edit_is_emitted_against_the_original_key(
     slack_adapter: SlackSocketModeAdapter, load_event: LoadEvent
 ) -> None:
-    emitted: list[Record[Any]] = []
+    emitted: list[Envelope[Any]] = []
     slack_adapter._emit = emitted.append
     event = load_event("message_changed")
 
@@ -172,7 +172,7 @@ def test_edit_is_emitted_against_the_original_key(
 def test_emit_failure_is_swallowed(
     slack_adapter: SlackSocketModeAdapter, load_event: LoadEvent
 ) -> None:
-    def boom(_: Record[Any]) -> None:
+    def boom(_: Envelope[Any]) -> None:
         raise RuntimeError("downstream exploded")
 
     slack_adapter._emit = boom
@@ -186,9 +186,9 @@ def test_bolt_dispatch_reaches_handler(
 ) -> None:
     """Bolt injects ``event``/``body`` by argument name into the bound listener."""
     received = threading.Event()
-    emitted: list[Record[Any]] = []
+    emitted: list[Envelope[Any]] = []
 
-    def emit(env: Record[Any]) -> None:
+    def emit(env: Envelope[Any]) -> None:
         emitted.append(env)
         received.set()
 

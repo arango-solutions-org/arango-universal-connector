@@ -4,11 +4,11 @@ A Python service that listens to Slack channels in real time (Socket Mode) and s
 every new message in ArangoDB as a JSON document.
 
 This is the MVP of a **universal connector**: sources (Slack today; Gmail, Teams,
-SharePoint, … later) are normalized into a source-agnostic [`Record`](#document-shape)
+SharePoint, … later) are normalized into a source-agnostic [`Envelope`](#document-shape)
 and written by a `Sink` (ArangoDB today).
 
 ```
-Slack (Socket Mode) ──► SlackSocketModeAdapter ──► normalize() ──► Record ──► Pipeline ──► ArangoSink ──► connector/messages
+Slack (Socket Mode) ──► SlackSocketModeAdapter ──► normalize() ──► Envelope ──► Pipeline ──► ArangoSink ──► connector/messages
                                                                                  │  (stamps expires_at)
                                                                                  └─ on final failure ──► dead_letter.jsonl
 ```
@@ -116,11 +116,11 @@ missing. Tokens and passwords are held as `SecretStr` and are never logged.
 
 ## Retention
 
-Records are deleted `RETENTION_DAYS` days after they were **posted** (not after they
+Envelopes are deleted `RETENTION_DAYS` days after they were **posted** (not after they
 were ingested). The default is 30 days. Set `RETENTION_DAYS=0` to keep them forever.
 
-The pipeline stamps every record with `expires_at` = `created_at` + `RETENTION_DAYS`
-before writing it, falling back to `ingested_at` for records whose source has no
+The pipeline stamps every envelope with `expires_at` = `created_at` + `RETENTION_DAYS`
+before writing it, falling back to `ingested_at` for envelopes whose source has no
 creation time. An ArangoDB TTL index on `expires_at` (with `expireAfter: 0`) deletes
 each document once that time has passed.
 
@@ -157,8 +157,8 @@ window elapses.
 
 ## Document shape
 
-Every source produces a `Record` (schema version 4). The top level is the same for all
-sources; `payload` is typed by the record's **kind**, so sources of the same kind share
+Every source produces an `Envelope` (schema version 4). The top level is the same for all
+sources; `payload` is typed by the envelope's **kind**, so sources of the same kind share
 a shape (Slack, Teams and Discord all produce `message` payloads).
 
 ```json
@@ -188,9 +188,9 @@ a shape (Slack, Teams and Discord all produce `message` payloads).
 
 Top-level fields:
 
-- `source` is the connector that produced the record, `kind` the entity kind
+- `source` is the connector that produced the envelope, `kind` the entity kind
   (`message` today), and `source_id` the item's own id in its source.
-- `scope` says where the record lives, outermost first:
+- `scope` says where the envelope lives, outermost first:
 
   | source  | `tenant_id` | `container_id` | `path` |
   |---------|-------------|----------------|--------|
@@ -271,7 +271,7 @@ uv run pytest -m integration
 src/arango_connector/
 ├── main.py            # entrypoint: config → registry → pipeline, signal handling
 ├── config.py          # CoreSettings, shared settings base and load_settings()
-├── record.py          # source-agnostic Record, Scope, make_key()
+├── envelope.py          # source-agnostic Envelope, Scope, make_key()
 ├── payloads.py        # typed payloads per entity kind (MessagePayload, ...)
 ├── pipeline.py        # source → sink, expires_at stamping, dead-lettering
 ├── registry.py        # name → factory maps (future plugin point)
@@ -286,7 +286,7 @@ src/arango_connector/
 │   └── slack/
 │       ├── config.py  # SlackSettings
 │       ├── adapter.py # SlackSocketModeAdapter (Bolt, Socket Mode)
-│       └── normalize.py  # pure: Slack event → Record | None
+│       └── normalize.py  # pure: Slack event → Envelope | None
 └── sinks/
     ├── base.py        # Sink ABC
     └── arango.py      # ArangoSink
@@ -300,8 +300,8 @@ src/arango_connector/
 2. **Add a settings class** next to your source, subclassing `ConnectorSettings`, for
    the environment variables only your source needs.
 3. **Write the adapter.** Implement `SourceAdapter` (`start(emit)` blocks and calls
-   `emit(record)`; `stop()` unblocks it), or subclass `PollingSourceAdapter` and
-   implement `poll_once(emit)` for an API you poll. Keep the mapping into `Record` in
+   `emit(envelope)`; `stop()` unblocks it), or subclass `PollingSourceAdapter` and
+   implement `poll_once(emit)` for an API you poll. Keep the mapping into `Envelope` in
    a pure `normalize` function like the Slack one, and build keys with `make_key()`
    so re-delivery dedupes.
 4. **Keep cursors in the `StateStore`** your factory is given (`get`/`put` small JSON
@@ -309,7 +309,7 @@ src/arango_connector/
 5. **Register a factory** in `registry.py` that loads your settings with
    `load_settings(YourSettings)`, and select it with `SOURCE=`.
 
-A sink implements `Sink` (`setup`, `write(list[Record])`, `close`) and is registered
+A sink implements `Sink` (`setup`, `write(list[Envelope])`, `close`) and is registered
 in `SINKS`.
 
 ## Not yet supported
@@ -318,7 +318,7 @@ These are deliberately out of scope for the MVP. Look for `TODO(future):` commen
 the extension points.
 
 - Deletes. A message deleted in Slack stays in ArangoDB until `RETENTION_DAYS`
-  elapses. Handling them needs a delete operation on `Record` and `Sink`, which
+  elapses. Handling them needs a delete operation on `Envelope` and `Sink`, which
   today only express "write this document".
 - Historical backfill (`conversations.history`), reactions and files.
 - Graph modeling (users/channels collections, edges) and ArangoSearch.

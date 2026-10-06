@@ -11,7 +11,7 @@ from arango.collection import StandardCollection
 from tenacity import Retrying
 
 from arango_connector.arango_common import connect, ensure_collection, retrying
-from arango_connector.record import make_key
+from arango_connector.envelope import make_key
 from arango_connector.state.base import StateStore
 
 logger = logging.getLogger(__name__)

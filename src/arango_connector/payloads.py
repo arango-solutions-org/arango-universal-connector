@@ -1,6 +1,6 @@
 """Typed payloads, one per entity kind.
 
-Payloads are typed by *what* a record is, not *where* it came from: Slack, Teams and
+Payloads are typed by *what* an envelope is, not *where* it came from: Slack, Teams and
 Discord all produce ``message`` payloads, so cross-source queries see one shape.
 
 TODO(future): kinds for upcoming sources follow the same pattern, e.g.
@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict
 
 
 class Payload(BaseModel):
-    """Base for all payloads. ``kind`` names the entity kind and is copied onto the Record."""
+    """Base for all payloads. ``kind`` names the entity kind and is copied onto the Envelope."""
 
     model_config = ConfigDict(frozen=True)
 

@@ -37,7 +37,7 @@ class PollingSourceAdapter(SourceAdapter):
 
     @abstractmethod
     def poll_once(self, emit: EmitFn) -> None:
-        """Fetch whatever is new since the last poll and ``emit`` each Record."""
+        """Fetch whatever is new since the last poll and ``emit`` each Envelope."""
 
     def start(self, emit: EmitFn) -> None:
         """Poll until :meth:`stop` is called. Never raises because of a failed poll."""

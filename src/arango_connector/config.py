@@ -45,7 +45,7 @@ class CoreSettings(ConnectorSettings):
     arango_collection: str = "messages"
     # Holds source cursors (e.g. Gmail historyId). Never subject to retention.
     state_collection: str = "connector_state"
-    # Days to keep records, counted from when they were posted. 0 disables retention.
+    # Days to keep envelopes, counted from when they were posted. 0 disables retention.
     retention_days: int = Field(default=30, ge=0)
 
     dead_letter_path: Path = Path("./dead_letter.jsonl")

@@ -1,4 +1,4 @@
-"""ArangoDB sink: idempotent upserts of Records into a document collection."""
+"""ArangoDB sink: idempotent upserts of Envelopes into a document collection."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from arango_connector.arango_common import (
     ensure_collection,
     retrying,
 )
-from arango_connector.record import Record
+from arango_connector.envelope import Envelope
 from arango_connector.sinks.base import Sink
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ INDEXES: tuple[tuple[str, ...], ...] = (
 
 # Retention is enforced by a TTL index on ``expires_at``, which the pipeline stamps as
 # (created_at or ingested_at) + RETENTION_DAYS. expireAfter=0 means "delete once the
-# stored date has passed", so records without a created_at still expire.
+# stored date has passed", so envelopes without a created_at still expire.
 TTL_FIELD = "expires_at"
 TTL_EXPIRE_AFTER = 0
 
@@ -66,11 +66,11 @@ def ttl_expiry_seconds(index: dict[str, Any]) -> int | None:
 
 
 class ArangoSink(Sink):
-    """Writes Records into a single ArangoDB document collection.
+    """Writes Envelopes into a single ArangoDB document collection.
 
     Idempotency comes from the deterministic ``_key`` plus ``overwrite_mode="replace"``:
     re-delivering the same item overwrites the existing document instead of creating a
-    duplicate. Replace rather than update because a Record is always a whole document:
+    duplicate. Replace rather than update because an Envelope is always a whole document:
     update merges nested objects, so keys an edit removed from ``raw`` would otherwise
     survive the write.
     """
@@ -208,11 +208,11 @@ class ArangoSink(Sink):
 
     # -- writes ------------------------------------------------------------
 
-    def write(self, records: list[Record[Any]]) -> None:
-        """Upsert records, retrying transient failures; re-raises on final failure."""
-        if not records:
+    def write(self, envelopes: list[Envelope[Any]]) -> None:
+        """Upsert envelopes, retrying transient failures; re-raises on final failure."""
+        if not envelopes:
             return
-        docs = [r.to_document() for r in records]
+        docs = [r.to_document() for r in envelopes]
         retrying(self._retry_attempts, self._retry_wait_initial, self._retry_wait_max)(
             self._write_once, docs
         )

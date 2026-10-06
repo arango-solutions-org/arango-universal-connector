@@ -54,7 +54,7 @@ def build_arango_sink(settings: CoreSettings) -> Sink:
 
 
 def build_state_store(settings: CoreSettings) -> StateStore:
-    """Build the state store. It lives in ArangoDB alongside the records."""
+    """Build the state store. It lives in ArangoDB alongside the envelopes."""
     from arango_connector.state.arango import ArangoStateStore
 
     return ArangoStateStore(

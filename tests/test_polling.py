@@ -7,14 +7,14 @@ from typing import Any
 
 import pytest
 
+from arango_connector.envelope import Envelope, Scope
 from arango_connector.payloads import MessagePayload
-from arango_connector.record import Record, Scope
 from arango_connector.sources.base import EmitFn
 from arango_connector.sources.polling import PollingSourceAdapter
 
 
-def _record(n: int) -> Record[MessagePayload]:
-    return Record[MessagePayload](
+def _envelope(n: int) -> Envelope[MessagePayload]:
+    return Envelope[MessagePayload](
         key=f"fake_{n}",
         source="fake",
         source_id=str(n),
@@ -42,11 +42,11 @@ class ScriptedPoller(PollingSourceAdapter):
             self.stop()
         if outcome == "fail":
             raise RuntimeError("api down")
-        emit(_record(self.polls))
+        emit(_envelope(self.polls))
 
 
 def test_polls_until_stopped_and_emits() -> None:
-    emitted: list[Record[Any]] = []
+    emitted: list[Envelope[Any]] = []
     poller = ScriptedPoller(["ok", "ok", "ok"])
 
     poller.start(emitted.append)
@@ -56,7 +56,7 @@ def test_polls_until_stopped_and_emits() -> None:
 
 
 def test_failed_poll_does_not_stop_the_loop() -> None:
-    emitted: list[Record[Any]] = []
+    emitted: list[Envelope[Any]] = []
     poller = ScriptedPoller(["fail", "fail", "ok"])
 
     poller.start(emitted.append)  # must not raise

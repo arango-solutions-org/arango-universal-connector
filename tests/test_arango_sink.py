@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from arango_connector.record import Record
+from arango_connector.envelope import Envelope
 from arango_connector.sinks.arango import (
     INDEXES,
     TTL_EXPIRE_AFTER,
@@ -168,9 +168,9 @@ def test_legacy_created_at_ttl_index_is_replaced(make_sink: MakeSink) -> None:
     assert ttl[0]["fields"] == [TTL_FIELD]
 
 
-def _stamped(record: Record[Any], days: int) -> Record[Any]:
-    assert record.created_at is not None
-    return record.model_copy(update={"expires_at": record.created_at + timedelta(days=days)})
+def _stamped(envelope: Envelope[Any], days: int) -> Envelope[Any]:
+    assert envelope.created_at is not None
+    return envelope.model_copy(update={"expires_at": envelope.created_at + timedelta(days=days)})
 
 
 def _expires_at(sink: ArangoSink, key: str) -> datetime:

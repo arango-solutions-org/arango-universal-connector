@@ -1,4 +1,4 @@
-"""Tests for the generic Record and key building."""
+"""Tests for the generic Envelope and key building."""
 
 from __future__ import annotations
 
@@ -7,12 +7,12 @@ from datetime import UTC, datetime
 
 import pytest
 
+from arango_connector.envelope import SCHEMA_VERSION, Envelope, Scope, make_key
 from arango_connector.payloads import MessagePayload, Payload
-from arango_connector.record import SCHEMA_VERSION, Record, Scope, make_key
 
 
-def _record(created_at: datetime | None = None) -> Record[MessagePayload]:
-    return Record[MessagePayload](
+def _envelope(created_at: datetime | None = None) -> Envelope[MessagePayload]:
+    return Envelope[MessagePayload](
         key="slack_C1_1.2",
         source="slack",
         source_id="1.2",
@@ -35,7 +35,7 @@ def test_make_key_rejects_invalid_arango_keys(bad: str) -> None:
 
 
 def test_kind_comes_from_payload_and_is_serialized() -> None:
-    doc = _record().to_document()
+    doc = _envelope().to_document()
     assert doc["kind"] == "message"
     assert doc["schema_version"] == SCHEMA_VERSION
     assert doc["payload"] == {
@@ -50,15 +50,15 @@ def test_kind_comes_from_payload_and_is_serialized() -> None:
     json.dumps(doc)
 
 
-def test_subclass_payload_fields_survive_base_typed_record() -> None:
-    """A Record typed with the base Payload must still write the subclass's fields."""
-    typed = _record()
-    loose = Record[Payload](**{**typed.model_dump(by_alias=True), "payload": typed.payload})
+def test_subclass_payload_fields_survive_base_typed_envelope() -> None:
+    """A Envelope typed with the base Payload must still write the subclass's fields."""
+    typed = _envelope()
+    loose = Envelope[Payload](**{**typed.model_dump(by_alias=True), "payload": typed.payload})
     assert loose.to_document()["payload"]["text"] == "hi"
 
 
 def test_retention_base_prefers_created_at() -> None:
     created = datetime(2024, 1, 1, tzinfo=UTC)
-    assert _record(created).retention_base == created
-    undated = _record(None)
+    assert _envelope(created).retention_base == created
+    undated = _envelope(None)
     assert undated.retention_base == undated.ingested_at

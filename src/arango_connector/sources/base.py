@@ -6,19 +6,19 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
 
-from arango_connector.record import Record
+from arango_connector.envelope import Envelope
 
-EmitFn = Callable[[Record[Any]], None]
+EmitFn = Callable[[Envelope[Any]], None]
 
 
 class SourceAdapter(ABC):
-    """A source of items (Slack, Gmail, ...) that emits normalized Records."""
+    """A source of items (Slack, Gmail, ...) that emits normalized Envelopes."""
 
     name: str
 
     @abstractmethod
     def start(self, emit: EmitFn) -> None:
-        """Start listening and call ``emit`` for every new Record. Blocks until stopped."""
+        """Start listening and call ``emit`` for every new Envelope. Blocks until stopped."""
 
     @abstractmethod
     def stop(self) -> None:

@@ -46,22 +46,22 @@ class SlackSocketModeAdapter(SourceAdapter):
             if channel not in self.channel_ids:
                 logger.debug("slack_event_ignored reason=unwatched_channel channel=%s", channel)
                 return
-            record = normalize(event, body.get("team_id"))
-            if record is None:
+            envelope = normalize(event, body.get("team_id"))
+            if envelope is None:
                 logger.debug(
                     "slack_event_skipped channel=%s subtype=%s", channel, event.get("subtype")
                 )
                 return
-            payload = record.payload
+            payload = envelope.payload
             if payload.author_type == "user" and payload.author_id:
                 name = self._resolve_user_name(payload.author_id)
-                record = record.model_copy(
+                envelope = envelope.model_copy(
                     update={"payload": payload.model_copy(update={"author_name": name})}
                 )
             if self._emit is None:
-                logger.warning("slack_event_dropped reason=not_started key=%s", record.key)
+                logger.warning("slack_event_dropped reason=not_started key=%s", envelope.key)
                 return
-            self._emit(record)
+            self._emit(envelope)
         except Exception:
             logger.exception(
                 "slack_event_handler_failed channel=%s ts=%s", event.get("channel"), event.get("ts")

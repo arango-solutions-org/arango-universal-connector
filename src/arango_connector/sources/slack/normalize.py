@@ -1,17 +1,17 @@
-"""Pure mapping from a Slack ``message`` event to a Record. No I/O."""
+"""Pure mapping from a Slack ``message`` event to an Envelope. No I/O."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from arango_connector.envelope import Envelope, Scope, make_key
 from arango_connector.payloads import MessagePayload
-from arango_connector.record import Record, Scope, make_key
 
 SOURCE = "slack"
 
 # Subtypes that represent a genuinely new message. Everything else is skipped.
-# TODO(future): handle "message_deleted" (deletes); needs a delete op on Record/Sink.
+# TODO(future): handle "message_deleted" (deletes); needs a delete op on Envelope/Sink.
 # TODO(future): handle "file_share" and reactions once files/reactions are in scope.
 INGESTED_SUBTYPES = frozenset({"bot_message", "thread_broadcast"})
 
@@ -34,7 +34,7 @@ def slack_ts_to_datetime(ts: str) -> datetime:
 def _flatten_edit(event: dict[str, Any]) -> dict[str, Any] | None:
     """Turn a ``message_changed`` event into the plain message event it now represents.
 
-    Returns a copy carrying the edited message's own ``ts``, so the Record keys to
+    Returns a copy carrying the edited message's own ``ts``, so the Envelope keys to
     the document already stored for the original. ``previous_message`` is deliberately
     dropped: it holds the pre-edit text, which is the content the edit removed.
     """
@@ -59,8 +59,8 @@ def _bot_name(event: dict[str, Any]) -> str | None:
     return event.get("username") or profile_name or None
 
 
-def normalize(event: dict[str, Any], team_id: str | None) -> Record[MessagePayload] | None:
-    """Map a Slack event to a Record, or return ``None`` if it should be skipped.
+def normalize(event: dict[str, Any], team_id: str | None) -> Envelope[MessagePayload] | None:
+    """Map a Slack event to an Envelope, or return ``None`` if it should be skipped.
 
     ``message_changed`` is mapped onto the original message's key so an edit overwrites
     what is stored. Skips non-``message`` events, subtypes other than ``bot_message`` /
@@ -97,7 +97,7 @@ def normalize(event: dict[str, Any], team_id: str | None) -> Record[MessagePaylo
     edited = event.get("edited")
     edited_ts = edited.get("ts") if isinstance(edited, dict) else None
 
-    return Record[MessagePayload](
+    return Envelope[MessagePayload](
         key=make_key(SOURCE, channel_id, ts),
         source=SOURCE,
         source_id=ts,

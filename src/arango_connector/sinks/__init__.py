@@ -1,1 +1,1 @@
-"""Sinks: persist Records to a destination store."""
+"""Sinks: persist Envelopes to a destination store."""

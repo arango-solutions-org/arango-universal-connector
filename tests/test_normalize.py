@@ -1,4 +1,4 @@
-"""Unit tests for the pure Slack -> Record mapping."""
+"""Unit tests for the pure Slack -> Envelope mapping."""
 
 from __future__ import annotations
 

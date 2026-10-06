@@ -1,4 +1,4 @@
-"""Source-agnostic record that every source maps into and every sink consumes."""
+"""Source-agnostic envelope that every source maps into and every sink consumes."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def make_key(source: str, *parts: str) -> str:
 
 
 class Scope(BaseModel):
-    """Where a record lives in its source, from outermost to innermost.
+    """Where an envelope lives in its source, from outermost to innermost.
 
     ============  ==============  ================  ====================
     source        tenant_id       container_id      path
@@ -51,7 +51,7 @@ class Scope(BaseModel):
     path: list[str] = Field(default_factory=list)
 
 
-class Record[P: Payload](BaseModel):
+class Envelope[P: Payload](BaseModel):
     """A single normalized item, independent of the source it came from."""
 
     model_config = ConfigDict(populate_by_name=True, frozen=True)
@@ -85,7 +85,7 @@ class Record[P: Payload](BaseModel):
     def to_document(self) -> dict[str, Any]:
         """Return a JSON-safe dict with ``_key`` and ISO 8601 datetimes.
 
-        ``serialize_as_any`` keeps payload-subclass fields even when the Record is
+        ``serialize_as_any`` keeps payload-subclass fields even when the Envelope is
         typed with the base ``Payload``.
         """
         return self.model_dump(mode="json", by_alias=True, serialize_as_any=True)

@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from arango_connector.record import Record
+from arango_connector.envelope import Envelope
 from arango_connector.sinks.base import Sink
 from arango_connector.sources.base import SourceAdapter
 from arango_connector.state.base import StateStore
@@ -34,9 +34,9 @@ def _retention_base(line: str) -> datetime | None:
 
 
 class Pipeline:
-    """Forwards every Record emitted by a source to a sink.
+    """Forwards every Envelope emitted by a source to a sink.
 
-    Stamps each Record's ``expires_at`` from ``retention_days`` before writing, and applies
+    Stamps each Envelope's ``expires_at`` from ``retention_days`` before writing, and applies
     the same window to the dead-letter file, which the sink's TTL index cannot reach.
     Sets up the source's ``state`` store, if any, before the source starts.
 
@@ -77,39 +77,39 @@ class Pipeline:
         )
         self.source.start(emit=self._handle)
 
-    def stamp_expiry(self, record: Record[Any]) -> Record[Any]:
-        """Return ``record`` with ``expires_at`` set from the retention window."""
+    def stamp_expiry(self, envelope: Envelope[Any]) -> Envelope[Any]:
+        """Return ``envelope`` with ``expires_at`` set from the retention window."""
         if self.retention_days <= 0:
-            return record.model_copy(update={"expires_at": None})
-        expires_at = record.retention_base + timedelta(days=self.retention_days)
-        return record.model_copy(update={"expires_at": expires_at})
+            return envelope.model_copy(update={"expires_at": None})
+        expires_at = envelope.retention_base + timedelta(days=self.retention_days)
+        return envelope.model_copy(update={"expires_at": expires_at})
 
-    def _handle(self, record: Record[Any]) -> None:
-        """Write one record; on failure dead-letter it. Never raises."""
+    def _handle(self, envelope: Envelope[Any]) -> None:
+        """Write one envelope; on failure dead-letter it. Never raises."""
         try:
-            record = self.stamp_expiry(record)
-            self.sink.write([record])
-            logger.debug("record_written key=%s", record.key)
+            envelope = self.stamp_expiry(envelope)
+            self.sink.write([envelope])
+            logger.debug("envelope_written key=%s", envelope.key)
         except Exception as exc:
             logger.error(
-                "record_write_failed key=%s error_type=%s error=%s dead_letter=%s",
-                record.key,
+                "envelope_write_failed key=%s error_type=%s error=%s dead_letter=%s",
+                envelope.key,
                 type(exc).__name__,
                 exc,
                 self.dead_letter_path,
             )
-            self._dead_letter(record)
+            self._dead_letter(envelope)
 
-    def _dead_letter(self, record: Record[Any]) -> None:
+    def _dead_letter(self, envelope: Envelope[Any]) -> None:
         try:
-            line = json.dumps(record.to_document(), ensure_ascii=False)
+            line = json.dumps(envelope.to_document(), ensure_ascii=False)
             with self._dead_letter_lock:
                 self.dead_letter_path.parent.mkdir(parents=True, exist_ok=True)
                 with self.dead_letter_path.open("a", encoding="utf-8") as fh:
                     fh.write(line + "\n")
         except Exception:
             # Last line of defence: the source loop must never crash.
-            logger.exception("dead_letter_write_failed key=%s", record.key)
+            logger.exception("dead_letter_write_failed key=%s", envelope.key)
 
     # -- dead-letter retention ---------------------------------------------
 
@@ -130,9 +130,9 @@ class Pipeline:
     def prune_dead_letter(self) -> int:
         """Drop dead-lettered documents older than the retention window.
 
-        Returns the number of entries removed. Retention is measured from a record's
+        Returns the number of entries removed. Retention is measured from an envelope's
         ``created_at`` (else ``ingested_at``) with the current window, matching how the
-        sink derives ``expires_at``, so a dead-lettered record ages out at the same time as
+        sink derives ``expires_at``, so a dead-lettered envelope ages out at the same time as
         it would have in ArangoDB. Never raises: losing the
         prune must not take the connector down.
         """

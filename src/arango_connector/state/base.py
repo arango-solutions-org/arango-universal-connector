@@ -9,7 +9,7 @@ from typing import Any
 class StateStore(ABC):
     """Durable key/value storage for source state, such as a sync cursor.
 
-    Kept separate from ``Sink`` so sinks only ever write records. Values are small JSON
+    Kept separate from ``Sink`` so sinks only ever write envelopes. Values are small JSON
     objects; ``namespace`` is the source name and ``key`` identifies the cursor within it
     (for example one per mailbox).
     """
