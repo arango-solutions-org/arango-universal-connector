@@ -1,1 +1,1 @@
-"""Source adapters: turn external message streams into Envelopes."""
+"""Source adapters: turn external streams and APIs into Envelopes."""

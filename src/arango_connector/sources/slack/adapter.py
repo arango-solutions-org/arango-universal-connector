@@ -52,9 +52,12 @@ class SlackSocketModeAdapter(SourceAdapter):
                     "slack_event_skipped channel=%s subtype=%s", channel, event.get("subtype")
                 )
                 return
-            if envelope.author_type == "user" and envelope.author_id:
-                name = self._resolve_user_name(envelope.author_id)
-                envelope = envelope.model_copy(update={"author_name": name})
+            payload = envelope.payload
+            if payload.author_type == "user" and payload.author_id:
+                name = self._resolve_user_name(payload.author_id)
+                envelope = envelope.model_copy(
+                    update={"payload": payload.model_copy(update={"author_name": name})}
+                )
             if self._emit is None:
                 logger.warning("slack_event_dropped reason=not_started key=%s", envelope.key)
                 return

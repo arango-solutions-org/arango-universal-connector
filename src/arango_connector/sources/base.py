@@ -1,17 +1,18 @@
-"""Base interface for all message sources."""
+"""Base interface for all sources."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from typing import Any
 
 from arango_connector.envelope import Envelope
 
-EmitFn = Callable[[Envelope], None]
+EmitFn = Callable[[Envelope[Any]], None]
 
 
 class SourceAdapter(ABC):
-    """A source of messages (Slack, Discord, ...) that emits normalized Envelopes."""
+    """A source of items (Slack, Gmail, ...) that emits normalized Envelopes."""
 
     name: str
 

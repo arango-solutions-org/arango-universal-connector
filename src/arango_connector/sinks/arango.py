@@ -5,20 +5,19 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import requests
 from arango import ArangoClient
 from arango.collection import StandardCollection
 from arango.database import StandardDatabase
-from arango.exceptions import ArangoServerError, DatabaseCreateError
-from tenacity import (
-    Retrying,
-    before_sleep_log,
-    retry_if_exception,
-    stop_after_attempt,
-    wait_exponential,
-)
+from arango.exceptions import ArangoServerError
 
+from arango_connector.arango_common import (
+    ArangoWriteError,
+    connect,
+    ensure_collection,
+    retrying,
+)
 from arango_connector.envelope import Envelope
+from arango_connector.retention import RetentionPolicy
 from arango_connector.sinks.base import Sink
 
 logger = logging.getLogger(__name__)
@@ -27,14 +26,13 @@ logger = logging.getLogger(__name__)
 # TODO(future): users/channels collections, edge collections (authored, reply_to,
 # posted_in) and an ArangoSearch view would be set up alongside these.
 INDEXES: tuple[tuple[str, ...], ...] = (
-    ("channel_id", "created_at"),
-    ("source", "workspace_id", "channel_id"),
+    ("scope.container_id", "created_at"),
+    ("source", "scope.tenant_id", "scope.container_id"),
+    ("kind",),
 )
 
-# Retention is enforced by a TTL index on the message timestamp, so the window is
-# measured from when a message was posted rather than when it was ingested.
-TTL_FIELD = "created_at"
-SECONDS_PER_DAY = 86400
+# Retention is enforced by one TTL index whose field and window come from the
+# RetentionPolicy (see retention.py for the two modes).
 
 
 def ttl_expiry_seconds(index: dict[str, Any]) -> int | None:
@@ -51,39 +49,14 @@ def ttl_expiry_seconds(index: dict[str, Any]) -> int | None:
     return None
 
 
-class ArangoWriteError(Exception):
-    """One or more documents in a batch failed to write."""
-
-    def __init__(self, errors: list[ArangoServerError]) -> None:
-        self.errors = errors
-        codes = sorted({str(e.http_code) for e in errors})
-        super().__init__(
-            f"{len(errors)} document(s) failed to write (http_codes={','.join(codes)}): "
-            f"{errors[0].error_message}"
-        )
-
-
-def _is_retryable(exc: BaseException) -> bool:
-    """Retry connection problems and transient server errors, not client mistakes."""
-    # python-arango raises the builtin ConnectionAbortedError once its own
-    # per-host attempts are exhausted; raw requests errors can also surface.
-    if isinstance(exc, ConnectionError | requests.exceptions.RequestException):
-        return True
-    if isinstance(exc, ArangoServerError):
-        return exc.http_code is None or exc.http_code >= 500 or exc.http_code in (408, 409, 429)
-    if isinstance(exc, ArangoWriteError):
-        return any(_is_retryable(e) for e in exc.errors)
-    return False
-
-
 class ArangoSink(Sink):
     """Writes Envelopes into a single ArangoDB document collection.
 
     Idempotency comes from the deterministic ``_key`` plus ``overwrite_mode="replace"``:
-    re-delivering the same message overwrites the existing document instead of
-    creating a duplicate. Replace rather than update because an Envelope is always a
-    whole document: update merges nested objects, so keys an edit removed from ``raw``
-    would otherwise survive the write.
+    re-delivering the same item overwrites the existing document instead of creating a
+    duplicate. Replace rather than update because an Envelope is always a whole document:
+    update merges nested objects, so keys an edit removed from ``raw`` would otherwise
+    survive the write.
     """
 
     def __init__(
@@ -94,7 +67,7 @@ class ArangoSink(Sink):
         db_name: str,
         collection_name: str,
         *,
-        retention_days: int = 0,
+        retention: RetentionPolicy | None = None,
         retry_attempts: int = 3,
         retry_wait_initial: float = 0.5,
         retry_wait_max: float = 5.0,
@@ -102,7 +75,7 @@ class ArangoSink(Sink):
         self.hosts = hosts
         self.db_name = db_name
         self.collection_name = collection_name
-        self.retention_days = retention_days
+        self.retention = retention or RetentionPolicy()
         self._username = username
         self._password = password
         self._retry_attempts = retry_attempts
@@ -118,26 +91,10 @@ class ArangoSink(Sink):
         """Create the database, collection and indexes if missing. Idempotent.
 
         Also reconciles the retention TTL index, which can delete existing documents.
+        Stored documents are never rewritten here; see ``maintenance.reconcile_expiry``.
         """
-        self._client = ArangoClient(hosts=self.hosts)
-        sys_db = self._client.db("_system", username=self._username, password=self._password)
-
-        if not sys_db.has_database(self.db_name):
-            try:
-                sys_db.create_database(self.db_name)
-                logger.info("arango_database_created db=%s", self.db_name)
-            except DatabaseCreateError:
-                # Lost a race with another process creating it; fine if it now exists.
-                if not sys_db.has_database(self.db_name):
-                    raise
-
-        self._db = self._client.db(self.db_name, username=self._username, password=self._password)
-
-        if not self._db.has_collection(self.collection_name):
-            self._db.create_collection(self.collection_name)
-            logger.info(
-                "arango_collection_created db=%s collection=%s", self.db_name, self.collection_name
-            )
+        self._client, self._db = connect(self.hosts, self._username, self._password, self.db_name)
+        ensure_collection(self._db, self.collection_name)
         collection = self._db.collection(self.collection_name)
 
         for fields in INDEXES:
@@ -152,21 +109,21 @@ class ArangoSink(Sink):
 
         self._collection = collection
         logger.info(
-            "arango_sink_ready hosts=%s db=%s collection=%s retention_days=%s",
+            "arango_sink_ready hosts=%s db=%s collection=%s retention=%s",
             self.hosts,
             self.db_name,
             self.collection_name,
-            self.retention_days,
+            self.retention.describe(),
         )
 
     def _reconcile_ttl_index(self, collection: StandardCollection) -> None:
-        """Make the collection's TTL index match ``retention_days``.
+        """Make the collection's TTL index match the retention policy.
 
-        ArangoDB allows at most one TTL index per collection, so changing the
-        retention window means dropping the old index before adding the new one;
-        ``add_index`` alone would fail once ``expireAfter`` differs.
+        ArangoDB allows at most one TTL index per collection, so an index on another
+        field or with another ``expireAfter`` (a different mode, window, or the pre-v4
+        index on ``created_at``) is dropped before the desired one is added.
         """
-        desired = self.retention_days * SECONDS_PER_DAY if self.retention_days > 0 else None
+        desired = self.retention.ttl_index()
         indexes = collection.indexes()
         # Not a list only for async/batch execution, which this sink never uses.
         if not isinstance(indexes, list):
@@ -176,8 +133,8 @@ class ArangoSink(Sink):
         if (
             desired is not None
             and len(existing) == 1
-            and existing[0]["fields"] == [TTL_FIELD]
-            and ttl_expiry_seconds(existing[0]) == desired
+            and existing[0]["fields"] == [desired[0]]
+            and ttl_expiry_seconds(existing[0]) == desired[1]
         ):
             return
 
@@ -192,14 +149,24 @@ class ArangoSink(Sink):
         if desired is None:
             return
 
-        collection.add_index({"type": "ttl", "fields": [TTL_FIELD], "expireAfter": desired})
+        field, expire_after = desired
+        collection.add_index({"type": "ttl", "fields": [field], "expireAfter": expire_after})
         logger.warning(
-            "arango_ttl_index_created collection=%s field=%s retention_days=%s "
-            "documents older than this are removed",
+            "arango_ttl_index_created collection=%s field=%s retention=%s "
+            "documents past their retention are removed",
             self.collection_name,
-            TTL_FIELD,
-            self.retention_days,
+            field,
+            self.retention.describe(),
         )
+        if self.retention.mode == "expiry":
+            # Deadlines are fixed at write time, so documents written under another
+            # window, another mode or before schema v4 keep theirs (or have none).
+            logger.warning(
+                "arango_existing_expiry_unchanged collection=%s existing documents keep "
+                "their stored expires_at; run arango-connector-reconcile-expiry to apply "
+                "this window to them",
+                self.collection_name,
+            )
 
     def close(self) -> None:
         """Close the HTTP session(s)."""
@@ -209,19 +176,14 @@ class ArangoSink(Sink):
 
     # -- writes ------------------------------------------------------------
 
-    def write(self, envelopes: list[Envelope]) -> None:
+    def write(self, envelopes: list[Envelope[Any]]) -> None:
         """Upsert envelopes, retrying transient failures; re-raises on final failure."""
         if not envelopes:
             return
-        docs = [e.to_document() for e in envelopes]
-        retrying = Retrying(
-            stop=stop_after_attempt(self._retry_attempts),
-            wait=wait_exponential(multiplier=self._retry_wait_initial, max=self._retry_wait_max),
-            retry=retry_if_exception(_is_retryable),
-            before_sleep=before_sleep_log(logger, logging.WARNING),
-            reraise=True,
+        docs = [r.to_document() for r in envelopes]
+        retrying(self._retry_attempts, self._retry_wait_initial, self._retry_wait_max)(
+            self._write_once, docs
         )
-        retrying(self._write_once, docs)
 
     def _write_once(self, docs: list[dict[str, Any]]) -> None:
         collection = self._require_collection()

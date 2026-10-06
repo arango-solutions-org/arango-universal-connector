@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 from arango_connector.envelope import Envelope
 
@@ -15,7 +16,7 @@ class Sink(ABC):
         """Ensure the destination is ready (databases, collections, indexes). Idempotent."""
 
     @abstractmethod
-    def write(self, envelopes: list[Envelope]) -> None:
+    def write(self, envelopes: list[Envelope[Any]]) -> None:
         """Persist envelopes. Takes a list so batching can be added later.
 
         Raises on failure after any internal retries have been exhausted.

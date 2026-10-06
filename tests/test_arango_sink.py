@@ -8,59 +8,42 @@ Connection details come from ARANGO_HOSTS / ARANGO_USERNAME / ARANGO_PASSWORD
 from __future__ import annotations
 
 import json
-import os
-import uuid
 from collections.abc import Callable, Iterator
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from arango_connector.sinks.arango import INDEXES, TTL_FIELD, ArangoSink, ttl_expiry_seconds
+from arango_connector.retention import RetentionPolicy
+from arango_connector.sinks.arango import INDEXES, ArangoSink, ttl_expiry_seconds
 from arango_connector.sources.slack.normalize import normalize
+
+if TYPE_CHECKING:
+    from conftest import ArangoConn
 
 pytestmark = pytest.mark.integration
 
 LoadEvent = Callable[[str], dict[str, Any]]
 
 
-def _env(name: str, default: str | None = None) -> str | None:
-    if name in os.environ:
-        return os.environ[name]
-    dotenv = Path(__file__).parent.parent / ".env"
-    if dotenv.exists():
-        for line in dotenv.read_text().splitlines():
-            key, sep, value = line.partition("=")
-            if sep and key.strip() == name:
-                return value.strip()
-    return default
-
-
 MakeSink = Callable[..., ArangoSink]
 
 
 @pytest.fixture
-def make_sink() -> Iterator[MakeSink]:
-    """Build sinks that all share one throwaway database, dropped afterwards.
+def make_sink(arango_conn: ArangoConn) -> Iterator[MakeSink]:
+    """Build sinks that all share one throwaway database.
 
     Tests that reconcile indexes need several sinks against the same collection.
     """
-    password = _env("ARANGO_PASSWORD")
-    if password is None:
-        pytest.skip("ARANGO_PASSWORD not set")
-    hosts = _env("ARANGO_HOSTS", "http://localhost:8529") or "http://localhost:8529"
-    username = _env("ARANGO_USERNAME", "root") or "root"
-    db_name = f"connector_test_{uuid.uuid4().hex[:8]}"
     created: list[ArangoSink] = []
 
-    def _make(retention_days: int = 0) -> ArangoSink:
+    def _make(retention_days: int = 0, **policy: Any) -> ArangoSink:
         s = ArangoSink(
-            hosts=hosts.split(",")[0],
-            username=username,
-            password=password,
-            db_name=db_name,
+            hosts=arango_conn.hosts,
+            username=arango_conn.username,
+            password=arango_conn.password,
+            db_name=arango_conn.db_name,
             collection_name="messages",
-            retention_days=retention_days,
+            retention=RetentionPolicy(retention_days, **policy),
             retry_wait_initial=0.01,
         )
         created.append(s)
@@ -68,14 +51,6 @@ def make_sink() -> Iterator[MakeSink]:
 
     yield _make
 
-    # Tear down the throwaway database.
-    from arango import ArangoClient
-
-    client = ArangoClient(hosts=hosts.split(",")[0])
-    sys_db = client.db("_system", username=username, password=password)
-    if sys_db.has_database(db_name):
-        sys_db.delete_database(db_name)
-    client.close()
     for s in created:
         s.close()
 
@@ -132,7 +107,7 @@ def test_same_envelope_twice_yields_one_document(sink: ArangoSink, load_event: L
     assert sink._collection is not None
     doc = sink._collection.get(env.key)
     assert isinstance(doc, dict)
-    assert doc["text"] == env.text
+    assert doc["payload"]["text"] == env.payload.text
     assert doc["created_at"] == env.to_document()["created_at"]
     assert doc["raw"] == env.raw
 
@@ -165,22 +140,74 @@ def test_ttl_index_created_and_setup_is_idempotent(make_sink: MakeSink) -> None:
 
     ttl = _ttl_indexes(sink)
     assert len(ttl) == 1
-    assert ttl[0]["fields"] == [TTL_FIELD]
-    assert ttl_expiry_seconds(ttl[0]) == 30 * 86400
+    assert ttl[0]["fields"] == ["expires_at"]
+    assert ttl_expiry_seconds(ttl[0]) == 0
     # Same index, not dropped and recreated on the second start.
     assert ttl[0]["id"] == first_id
 
 
-def test_changing_retention_replaces_the_index(make_sink: MakeSink) -> None:
-    make_sink(retention_days=30).setup()
+def test_age_mode_ttl_index(make_sink: MakeSink) -> None:
+    sink = make_sink(retention_days=30, mode="age", age_field="ingested_at")
+    sink.setup()
+
+    ttl = _ttl_indexes(sink)
+    assert len(ttl) == 1
+    assert ttl[0]["fields"] == ["ingested_at"]
+    assert ttl_expiry_seconds(ttl[0]) == 30 * 86400
+
+
+def test_switching_mode_replaces_the_index(make_sink: MakeSink) -> None:
+    make_sink(retention_days=30, mode="age").setup()
 
     # A second TTL index would be rejected, so this only passes if the first is dropped.
-    changed = make_sink(retention_days=7)
+    switched = make_sink(retention_days=30)
+    switched.setup()
+
+    ttl = _ttl_indexes(switched)
+    assert len(ttl) == 1
+    assert ttl[0]["fields"] == ["expires_at"]
+
+
+def test_age_mode_window_change_replaces_the_index(make_sink: MakeSink) -> None:
+    make_sink(retention_days=30, mode="age").setup()
+
+    changed = make_sink(retention_days=7, mode="age")
     changed.setup()
 
     ttl = _ttl_indexes(changed)
     assert len(ttl) == 1
     assert ttl_expiry_seconds(ttl[0]) == 7 * 86400
+
+
+def test_legacy_created_at_ttl_index_is_replaced(make_sink: MakeSink) -> None:
+    legacy = make_sink(retention_days=0)
+    legacy.setup()
+    assert legacy._collection is not None
+    legacy._collection.add_index({"type": "ttl", "fields": ["created_at"], "expireAfter": 86400})
+
+    upgraded = make_sink(retention_days=30)
+    upgraded.setup()
+
+    ttl = _ttl_indexes(upgraded)
+    assert len(ttl) == 1
+    assert ttl[0]["fields"] == ["expires_at"]
+
+
+def test_setup_never_rewrites_stored_documents(make_sink: MakeSink, load_event: LoadEvent) -> None:
+    """Changing the window is applied by reconcile-expiry, not silently at startup."""
+    first = make_sink(retention_days=30)
+    first.setup()
+    env = normalize(load_event("user_message"), "T0TESTTEAM")
+    assert env is not None
+    stamped = RetentionPolicy(30).stamp(env)
+    first.write([stamped])
+
+    make_sink(retention_days=7).setup()
+
+    assert first._collection is not None
+    doc = first._collection.get(env.key)
+    assert isinstance(doc, dict)
+    assert doc["expires_at"] == stamped.to_document()["expires_at"]
 
 
 def test_disabling_retention_drops_the_index(make_sink: MakeSink) -> None:
@@ -193,18 +220,15 @@ def test_disabling_retention_drops_the_index(make_sink: MakeSink) -> None:
 
 
 def test_ttl_field_is_a_date_arango_can_expire(make_sink: MakeSink, load_event: LoadEvent) -> None:
-    """created_at is written with microsecond precision; Arango must parse it as a date."""
+    """expires_at is written with microsecond precision; Arango must parse it as a date."""
     sink = make_sink(retention_days=1)
     sink.setup()
     env = normalize(load_event("user_message"), "T0TESTTEAM")
     assert env is not None
-    sink.write([env])
+    sink.write([RetentionPolicy(1).stamp(env)])
 
     assert sink._db is not None
-    cursor = sink._db.aql.execute(
-        "FOR m IN messages LIMIT 1 RETURN IS_DATESTRING(m.@field)",
-        bind_vars={"field": TTL_FIELD},
-    )
+    cursor = sink._db.aql.execute("FOR m IN messages LIMIT 1 RETURN IS_DATESTRING(m.expires_at)")
     assert list(cursor) == [True]  # type: ignore[arg-type]
 
 
@@ -225,8 +249,8 @@ def test_edit_overwrites_stored_message(sink: ArangoSink, load_event: LoadEvent)
     assert sink._collection is not None
     doc = sink._collection.get(first.key)
     assert isinstance(doc, dict)
-    assert doc["text"] == "Hello from the test channel (edited)"
-    assert doc["edited_at"] is not None
+    assert doc["payload"]["text"] == "Hello from the test channel (edited)"
+    assert doc["updated_at"] is not None
     # Replace, not update: keys the edit dropped must not linger inside raw.
     assert "reactions" not in doc["raw"]
     assert "wave" not in json.dumps(doc)

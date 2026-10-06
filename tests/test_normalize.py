@@ -26,18 +26,22 @@ def test_user_message_field_mapping(load_event: LoadEvent) -> None:
 
     assert env is not None
     assert env.key == "slack_C0TESTCHAN1_1716500000.123456"
-    assert env.schema_version == 3
-    assert env.edited_at is None
+    assert env.schema_version == 4
+    assert env.kind == "message"
+    assert env.updated_at is None
+    assert env.expires_at is None  # stamped by the pipeline, not here
     assert env.source == "slack"
-    assert env.workspace_id == TEAM_ID
-    assert env.channel_id == "C0TESTCHAN1"
-    assert env.author_id == "U0TESTUSER1"
-    assert env.author_name is None  # resolved by the adapter, not here
-    assert env.author_type == "user"
-    assert env.text == "Hello from the test channel :wave:"
-    assert env.source_ts == "1716500000.123456"
+    assert env.scope.tenant_id == TEAM_ID
+    assert env.scope.container_id == "C0TESTCHAN1"
+    assert env.scope.path == []
+    assert env.payload.author_id == "U0TESTUSER1"
+    assert env.payload.author_name is None  # resolved by the adapter, not here
+    assert env.payload.author_type == "user"
+    assert env.payload.text == "Hello from the test channel :wave:"
+    assert env.source_id == "1716500000.123456"
     assert env.created_at == datetime(2024, 5, 23, 21, 33, 20, 123456, tzinfo=UTC)
-    assert env.thread_parent is None
+    assert env.payload.thread_id is None
+    assert env.payload.parent_id is None
     assert env.ingested_at.tzinfo is not None
 
 
@@ -45,23 +49,25 @@ def test_key_format_is_arango_safe(load_event: LoadEvent) -> None:
     for name in ("user_message", "thread_reply", "bot_message"):
         env = normalize(load_event(name), TEAM_ID)
         assert env is not None
-        assert env.key == f"slack_{env.channel_id}_{env.source_ts}"
+        assert env.key == f"slack_{env.scope.container_id}_{env.source_id}"
         assert ARANGO_KEY_RE.match(env.key), env.key
 
 
-def test_thread_reply_sets_thread_parent(load_event: LoadEvent) -> None:
+def test_thread_reply_sets_thread_and_parent(load_event: LoadEvent) -> None:
     env = normalize(load_event("thread_reply"), TEAM_ID)
     assert env is not None
-    assert env.thread_parent == "1716500000.123456"
-    assert env.author_id == "U0TESTUSER2"
+    assert env.payload.thread_id == "1716500000.123456"
+    assert env.payload.parent_id == "1716500000.123456"
+    assert env.payload.author_id == "U0TESTUSER2"
 
 
-def test_thread_parent_is_none_when_thread_ts_equals_ts(load_event: LoadEvent) -> None:
+def test_thread_root_has_thread_but_no_parent(load_event: LoadEvent) -> None:
     event = load_event("user_message")
     event["thread_ts"] = event["ts"]  # the thread's root message
     env = normalize(event, TEAM_ID)
     assert env is not None
-    assert env.thread_parent is None
+    assert env.payload.thread_id == event["ts"]
+    assert env.payload.parent_id is None
 
 
 def test_thread_broadcast_is_ingested(load_event: LoadEvent) -> None:
@@ -69,17 +75,17 @@ def test_thread_broadcast_is_ingested(load_event: LoadEvent) -> None:
     event["subtype"] = "thread_broadcast"
     env = normalize(event, TEAM_ID)
     assert env is not None
-    assert env.author_type == "user"
-    assert env.thread_parent == "1716500000.123456"
+    assert env.payload.author_type == "user"
+    assert env.payload.parent_id == "1716500000.123456"
 
 
 def test_bot_message(load_event: LoadEvent) -> None:
     env = normalize(load_event("bot_message"), TEAM_ID)
     assert env is not None
-    assert env.author_type == "bot"
-    assert env.author_id == "B0TESTBOT1"
-    assert env.author_name == "deploy-bot"
-    assert env.text == "Deploy finished successfully"
+    assert env.payload.author_type == "bot"
+    assert env.payload.author_id == "B0TESTBOT1"
+    assert env.payload.author_name == "deploy-bot"
+    assert env.payload.text == "Deploy finished successfully"
 
 
 def test_app_bot_without_subtype_is_bot(load_event: LoadEvent) -> None:
@@ -88,9 +94,9 @@ def test_app_bot_without_subtype_is_bot(load_event: LoadEvent) -> None:
     event["bot_profile"] = {"id": "B0TESTBOT2", "name": "Release Bot"}
     env = normalize(event, TEAM_ID)
     assert env is not None
-    assert env.author_type == "bot"
-    assert env.author_id == "B0TESTBOT2"
-    assert env.author_name == "Release Bot"
+    assert env.payload.author_type == "bot"
+    assert env.payload.author_id == "B0TESTBOT2"
+    assert env.payload.author_name == "Release Bot"
 
 
 def test_edit_keys_to_the_original_message(load_event: LoadEvent) -> None:
@@ -99,19 +105,19 @@ def test_edit_keys_to_the_original_message(load_event: LoadEvent) -> None:
     assert env is not None
     # The edit's own ts (1716500300.000400) must not leak into the key.
     assert env.key == "slack_C0TESTCHAN1_1716500000.123456"
-    assert env.source_ts == "1716500000.123456"
+    assert env.source_id == "1716500000.123456"
     assert env.created_at == datetime(2024, 5, 23, 21, 33, 20, 123456, tzinfo=UTC)
-    assert env.channel_id == "C0TESTCHAN1"
-    assert env.author_id == "U0TESTUSER1"
-    assert env.author_type == "user"
+    assert env.scope.container_id == "C0TESTCHAN1"
+    assert env.payload.author_id == "U0TESTUSER1"
+    assert env.payload.author_type == "user"
 
 
-def test_edit_stores_the_new_text_and_edited_at(load_event: LoadEvent) -> None:
+def test_edit_stores_the_new_text_and_updated_at(load_event: LoadEvent) -> None:
     env = normalize(load_event("message_changed"), TEAM_ID)
 
     assert env is not None
-    assert env.text == "Hello from the test channel (edited)"
-    assert env.edited_at == datetime(2024, 5, 23, 21, 38, 20, tzinfo=UTC)
+    assert env.payload.text == "Hello from the test channel (edited)"
+    assert env.updated_at == datetime(2024, 5, 23, 21, 38, 20, tzinfo=UTC)
 
 
 def test_edit_raw_drops_the_pre_edit_text(load_event: LoadEvent) -> None:
@@ -137,8 +143,8 @@ def test_bot_edit_stays_a_bot(load_event: LoadEvent) -> None:
 
     env = normalize(event, TEAM_ID)
     assert env is not None
-    assert env.author_type == "bot"
-    assert env.author_id == "B0TESTBOT1"
+    assert env.payload.author_type == "bot"
+    assert env.payload.author_id == "B0TESTBOT1"
 
 
 def test_edit_falls_back_to_outer_team(load_event: LoadEvent) -> None:
@@ -146,7 +152,7 @@ def test_edit_falls_back_to_outer_team(load_event: LoadEvent) -> None:
     event["team"] = "T0OUTERTEAM"
     env = normalize(event, None)
     assert env is not None
-    assert env.workspace_id == "T0OUTERTEAM"
+    assert env.scope.tenant_id == "T0OUTERTEAM"
 
 
 def test_edit_without_inner_message_returns_none(load_event: LoadEvent) -> None:
@@ -184,7 +190,7 @@ def test_missing_text_becomes_empty_string(load_event: LoadEvent) -> None:
     del event["text"]
     env = normalize(event, TEAM_ID)
     assert env is not None
-    assert env.text == ""
+    assert env.payload.text == ""
 
 
 def test_raw_equals_input_and_input_not_mutated(load_event: LoadEvent) -> None:
@@ -203,6 +209,10 @@ def test_to_document_is_json_safe_with_key_alias(load_event: LoadEvent) -> None:
 
     assert doc["_key"] == env.key
     assert "key" not in doc
+    assert doc["kind"] == "message"
+    assert doc["scope"] == {"tenant_id": TEAM_ID, "container_id": "C0TESTCHAN1", "path": []}
+    assert doc["payload"]["text"] == "Replying in the thread"
+    assert doc["payload"]["parent_id"] == "1716500000.123456"
     assert doc["created_at"] == "2024-05-23T21:35:00.000200Z"
     assert isinstance(doc["ingested_at"], str)
     datetime.fromisoformat(doc["ingested_at"])
