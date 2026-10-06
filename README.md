@@ -237,6 +237,21 @@ This file holds full item content, so it is covered by `RETENTION_DAYS` too. See
 
 ## Development
 
+The Makefile wraps the common tasks; run `make` (or `make help`) to list them.
+
+```bash
+make install            # uv sync
+make check              # lint, format check, mypy, unit tests (no ArangoDB needed)
+make test-integration   # starts a disposable ArangoDB on :18529, then runs integration tests
+make test-db-down       # remove that database when you're done
+```
+
+Container targets work with Docker or Podman (auto-detected; override with
+`CONTAINER=podman`). `make up` / `down` / `logs` need a Compose provider (Docker
+Compose, or `podman compose` with one installed).
+
+Without make:
+
 ```bash
 uv sync
 uv run pytest                  # unit tests (no ArangoDB needed)
