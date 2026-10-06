@@ -41,23 +41,28 @@ owner signs in once.
 
 1. In [Google Cloud Console](https://console.cloud.google.com/), select or create a
    project, then **APIs & Services → Library → Gmail API → Enable**.
-2. **APIs & Services → OAuth consent screen**:
+2. **APIs & Services → OAuth consent screen** (called **Google Auth Platform** in the
+   newer console):
    - **Internal**, if offered (the project belongs to your Workspace org). There is no
      verification and no test-user list.
    - Otherwise **External**, left in *Testing*, with each mailbox added as a test user.
      In Testing, refresh tokens expire after 7 days, so re-run step 4 weekly or publish
      the app.
 3. **APIs & Services → Credentials → Create credentials → OAuth client ID → Desktop
-   app**. Download the JSON as `secrets/gmail/client.json`.
+   app** (credentials are created at project level, not on the Gmail API page). If
+   the wizard asks what data you'll access, choose **User data**. Download the JSON as
+   `secrets/gmail/client.json`.
 4. For each mailbox, run the helper. It opens a browser, asks for read-only access,
    checks you signed in as that mailbox, and writes `<mailbox>.json` (mode `0600`):
 
    ```bash
-   uv run arango-connector-gmail-auth --client-secrets secrets/gmail/client.json \
-       --mailbox ada@example.com --out-dir secrets/gmail
+   make gmail-auth MAILBOX=ada@example.com
+   # or: uv run arango-connector-gmail-auth --client-secrets secrets/gmail/client.json \
+   #         --mailbox ada@example.com --out-dir secrets/gmail
    ```
 
-   Use `--no-browser` on a headless machine to print the consent URL instead.
+   On a headless machine, add `ARGS=--no-browser` (or `--no-browser`) to print the
+   consent URL instead.
 5. Set `GMAIL_AUTH_MODE=oauth` and `GMAIL_OAUTH_TOKEN_DIR=secrets/gmail`.
 
 The connector refuses to start if the key file, or any mailbox's token file, is missing.
@@ -86,10 +91,11 @@ Redaction always wins over `GMAIL_RAW_MODE`: with `GMAIL_STORE_BODY=false` or
 
 ## Running
 
-**Locally** (with ArangoDB from `docker compose up -d arangodb`):
+**Locally**, against ArangoDB from `docker compose up -d arangodb`, or the disposable
+one from `make test-db-up` (<http://localhost:18529>, `root` / `test-password`):
 
 ```bash
-SOURCE=gmail uv run python -m arango_connector.main
+SOURCE=gmail make run      # or: SOURCE=gmail uv run python -m arango_connector.main
 ```
 
 The `connector` database and its collections are created on the first start, so they

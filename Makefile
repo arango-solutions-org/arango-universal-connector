@@ -20,7 +20,7 @@ TEST_DB_URL := http://localhost:$(TEST_DB_PORT)
 TEST_DB_ENV := ARANGO_HOSTS=$(TEST_DB_URL) ARANGO_PASSWORD=$(TEST_DB_PASSWORD) ARANGO_USERNAME=root
 
 .PHONY: help install lint format format-check typecheck test test-integration test-all check \
-	test-db-up test-db-down run build up down logs reconcile-expiry clean
+	test-db-up test-db-down run build up down logs reconcile-expiry gmail-auth clean
 
 help: ## Show this help
 	@echo "Usage: make <target> [VAR=value]"
@@ -94,6 +94,17 @@ logs: _require-container ## Follow the connector's Compose logs
 
 reconcile-expiry: ## Apply RETENTION_DAYS to stored documents (ARGS="--dry-run")
 	uv run arango-connector-reconcile-expiry $(ARGS)
+
+GMAIL_CLIENT_SECRETS ?= secrets/gmail/client.json
+GMAIL_TOKEN_DIR ?= secrets/gmail
+
+gmail-auth: ## Authorise a mailbox for Gmail OAuth mode (MAILBOX=you@example.com)
+	@if [ -z "$(MAILBOX)" ]; then echo "Usage: make gmail-auth MAILBOX=you@example.com" >&2; exit 1; fi
+	@if [ ! -f "$(GMAIL_CLIENT_SECRETS)" ]; then \
+		echo "OAuth client JSON not found at $(GMAIL_CLIENT_SECRETS); see docs/sources/gmail.md#setup" >&2; exit 1; \
+	fi
+	uv run arango-connector-gmail-auth --client-secrets $(GMAIL_CLIENT_SECRETS) \
+		--mailbox $(MAILBOX) --out-dir $(GMAIL_TOKEN_DIR) $(ARGS)
 
 # -- housekeeping ---------------------------------------------------------
 
