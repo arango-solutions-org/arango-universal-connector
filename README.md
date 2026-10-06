@@ -1,19 +1,23 @@
 # Arango Connector
 
-A Python service that listens to Slack channels in real time (Socket Mode) and stores
-every new message in ArangoDB as a JSON document.
+A Python service that streams messages from Slack channels (in real time, over Socket
+Mode) and emails from Gmail mailboxes (polled incrementally) into ArangoDB as JSON
+documents.
 
-This is the MVP of a **universal connector**: sources (Slack today; Gmail, Teams,
+This is the MVP of a **universal connector**: sources (Slack and Gmail today; Teams,
 SharePoint, … later) are normalized into a source-agnostic [`Envelope`](#document-shape)
-and written by a `Sink` (ArangoDB today).
+and written by a `Sink` (ArangoDB today). Each connector process runs one source.
 
 ```
-Slack (Socket Mode) ──► SlackSocketModeAdapter ──► normalize() ──► Envelope ──► Pipeline ──► ArangoSink ──► connector/messages
-                                                                                 │  (stamps expires_at)
-                                                                                 └─ on final failure ──► dead_letter.jsonl
+Slack (Socket Mode) ──► SlackSocketModeAdapter ──► normalize() ──┐
+                                                                 ├─► Envelope ──► Pipeline ──► ArangoSink ──► connector/<collection>
+Gmail (history API) ──► GmailPollingAdapter ────► normalize() ──┘                  │  (stamps expires_at)
+        ▲ cursor per mailbox in connector_state                                     └─ on final failure ──► dead_letter.jsonl
 ```
 
 ## What it does
+
+For the Gmail source, see [Gmail source](#gmail-source). For Slack:
 
 - Ingests new messages, including thread replies, bot messages and thread
   broadcasts, from an allowlist of channel IDs.
@@ -94,6 +98,7 @@ All settings come from environment variables or `.env`.
 | `SLACK_BOT_TOKEN`   | slack    | —                       | `xoxb-…`                                 |
 | `SLACK_APP_TOKEN`   | slack    | —                       | `xapp-…`, needs `connections:write`      |
 | `SLACK_CHANNEL_IDS` | slack    | —                       | Comma-separated, e.g. `C012,C034`        |
+| `GMAIL_*`           | gmail    |                         | See [Gmail configuration](#gmail-configuration) |
 | `ARANGO_HOSTS`      | no       | `http://localhost:8529` | Comma-separated for multiple coordinators |
 | `ARANGO_USERNAME`   | no       | `root`                  |                                          |
 | `ARANGO_PASSWORD`   | yes      | —                       | Also the ArangoDB root password in Compose |
@@ -106,8 +111,8 @@ All settings come from environment variables or `.env`.
 | `DEAD_LETTER_PATH`  | no       | `./dead_letter.jsonl`   | `/data/dead_letter.jsonl` in Docker      |
 | `LOG_LEVEL`         | no       | `INFO`                  |                                          |
 
-Variables marked *slack* are required only when `SOURCE=slack`: each source loads its
-own settings class, so a deployment only needs the variables of the source it runs.
+Variables marked *slack* or *gmail* are required only when `SOURCE` selects that
+source: each source loads its own settings class, so a deployment only needs the variables of the source it runs.
 The connector exits immediately with a clear message if a required variable is
 missing. Tokens and passwords are held as `SecretStr` and are never logged.
 
@@ -228,6 +233,7 @@ Top-level fields:
   | source  | `tenant_id` | `container_id` | `path` |
   |---------|-------------|----------------|--------|
   | slack   | team        | channel        | `[]`   |
+  | gmail   | mailbox domain | mailbox key (hashed or address, see `GMAIL_KEY_MODE`) | `[]` |
 
 - `updated_at` is when the content last changed in the source (for Slack, the most
   recent edit), or `null`.
@@ -305,7 +311,7 @@ uv run pytest -m integration
 src/arango_connector/
 ├── main.py            # entrypoint: config → registry → pipeline, signal handling
 ├── config.py          # CoreSettings, shared settings base and load_settings()
-├── envelope.py          # source-agnostic Envelope, Scope, make_key()
+├── envelope.py        # source-agnostic Envelope, Scope, make_key()
 ├── payloads.py        # typed payloads per entity kind (MessagePayload, ...)
 ├── pipeline.py        # source → sink, retention stamping, dead-lettering
 ├── retention.py       # RetentionPolicy: expiry / age modes
@@ -319,10 +325,16 @@ src/arango_connector/
 ├── sources/
 │   ├── base.py        # SourceAdapter ABC
 │   ├── polling.py     # PollingSourceAdapter: interval loop, backoff, clean stop
-│   └── slack/
-│       ├── config.py  # SlackSettings
-│       ├── adapter.py # SlackSocketModeAdapter (Bolt, Socket Mode)
-│       └── normalize.py  # pure: Slack event → Envelope | None
+│   ├── slack/
+│   │   ├── config.py  # SlackSettings
+│   │   ├── adapter.py # SlackSocketModeAdapter (Bolt, Socket Mode)
+│   │   └── normalize.py  # pure: Slack event → Envelope | None
+│   └── gmail/
+│       ├── config.py  # GmailSettings
+│       ├── auth.py    # credentials + arango-connector-gmail-auth (OAuth helper)
+│       ├── client.py  # GmailClient protocol + googleapiclient implementation
+│       ├── adapter.py # GmailPollingAdapter (history sync, cursors, label filter)
+│       └── normalize.py  # pure: Gmail message → Envelope | None
 └── sinks/
     ├── base.py        # Sink ABC
     └── arango.py      # ArangoSink
@@ -348,6 +360,154 @@ src/arango_connector/
 A sink implements `Sink` (`setup`, `write(list[Envelope])`, `close`) and is registered
 in `SINKS`.
 
+## Gmail source
+
+Run with `SOURCE=gmail`. The connector polls each mailbox in `GMAIL_MAILBOXES` every
+`GMAIL_POLL_INTERVAL_SECONDS` (60 by default) and writes one document per email, so new
+mail lands within about a minute. It uses only the **read-only** Gmail scope
+(`gmail.readonly`) and can never send, change or delete mail.
+
+### Gmail setup
+
+There are two ways to authorise, chosen with `GMAIL_AUTH_MODE`.
+
+**Service account with domain-wide delegation (`service_account`, default).** Best for
+Google Workspace and for many mailboxes: one key reads every listed mailbox, and no
+user has to sign in.
+
+1. In Google Cloud Console, enable the **Gmail API**, create a service account, and
+   create a JSON key for it.
+2. In the Workspace Admin console go to **Security → Access and data control → API
+   controls → Manage domain-wide delegation**, add the service account's client ID,
+   and grant exactly `https://www.googleapis.com/auth/gmail.readonly`.
+3. Save the key as `secrets/gmail/service-account.json` and set
+   `GMAIL_SERVICE_ACCOUNT_FILE` to it.
+
+**Per-mailbox OAuth (`oauth`).** For personal `@gmail.com` accounts or where delegation
+isn't available. Each mailbox owner signs in once.
+
+1. In Google Cloud Console, enable the **Gmail API** and create an **OAuth client ID**
+   of type *Desktop app*; download its JSON.
+2. For each mailbox, run the helper. It opens a browser, asks for read-only access,
+   checks you signed in as that mailbox, and writes the token file (mode `0600`):
+
+   ```bash
+   uv run arango-connector-gmail-auth --client-secrets client.json \
+       --mailbox ada@example.com --out-dir secrets/gmail
+   ```
+
+3. Set `GMAIL_AUTH_MODE=oauth` and `GMAIL_OAUTH_TOKEN_DIR=secrets/gmail`.
+
+The connector refuses to start if the key file or a mailbox's token file is missing.
+
+**Running in Docker.** The `connector-gmail` Compose service runs alongside Slack as a
+separate process, writes to the `emails` collection, and mounts `./secrets/gmail`
+read-only at `/secrets/gmail`:
+
+```bash
+docker compose --profile gmail up -d --build
+```
+
+The container runs as uid 10001, so files in `secrets/gmail` must be readable by it.
+On Linux hosts that may mean `chmod 644` on the key and tokens, or changing their
+owner to that uid.
+
+### Gmail configuration
+
+| Variable | Default | Notes |
+|---|---|---|
+| `GMAIL_MAILBOXES` | required | Comma-separated addresses |
+| `GMAIL_AUTH_MODE` | `service_account` | or `oauth` |
+| `GMAIL_SERVICE_ACCOUNT_FILE` | required for `service_account` | JSON key with domain-wide delegation |
+| `GMAIL_OAUTH_TOKEN_DIR` | required for `oauth` | One `<mailbox>.json` per mailbox |
+| `GMAIL_LABELS` | `INBOX,SENT` | Ingest mail with **any** of these. Label IDs or names (names are resolved per mailbox). The default captures both sides of conversations |
+| `GMAIL_EXCLUDE_LABELS` | `SPAM,TRASH,DRAFT` | ... and **none** of these |
+| `GMAIL_POLL_INTERVAL_SECONDS` | `60` | |
+| `GMAIL_INITIAL_SYNC` | `now` | First start for a mailbox: `now` takes only new mail; `lookback` also takes recent mail |
+| `GMAIL_INITIAL_LOOKBACK` | `24h` | For `lookback`: e.g. `90m`, `24h`, `7d`. Bounded; this is not a full backfill |
+| `GMAIL_KEY_MODE` | `hashed` | `hashed`: keys, `scope.container_id` and logs use a 16-char SHA-256 of the address. `plain`: the address itself |
+| `GMAIL_STORE_BODY` | `true` | `false` stores headers only: no `body_text`, no `snippet`, no body data in `raw` |
+| `GMAIL_STORE_BCC` | `true` | `false` drops Bcc from the payload and from `raw` headers |
+| `GMAIL_RAW_MODE` | `stripped` | `full` (the API message as-is), `stripped` (no base64 body blobs) or `none` |
+
+Redaction always wins over `GMAIL_RAW_MODE`: with `GMAIL_STORE_BODY=false` or
+`GMAIL_STORE_BCC=false`, even `full` raw omits that content.
+
+### How Gmail sync works
+
+- **Cursor per mailbox.** Each mailbox's Gmail `historyId` and last sync time are kept
+  in `connector_state`, so a restart resumes where it stopped. The cursor only moves
+  after every message up to it has been handed to the sink, so delivery is
+  at-least-once. Keys are deterministic (`gmail_{mailbox key}_{message id}`), so a
+  re-read overwrites rather than duplicates.
+- **What is read.** New messages, and messages whose labels changed. A message that
+  gains a watched label later (for example, moved back to the inbox) is ingested
+  then. A label change rewrites the stored document with current `label_ids` and sets
+  `updated_at`.
+- **What is not removed.** Mail deleted, trashed or moved out of watched labels stays
+  stored until retention removes it, like Slack deletes.
+- **History gaps.** Gmail keeps history for about a week. If the connector was down
+  longer, the next poll logs `gmail_history_gap` and catches up by date from an hour
+  before the last sync, then resumes history sync.
+- **Failures.** A mailbox that fails (for example, delegation not granted) is logged
+  as `gmail_mailbox_sync_failed` and retried next poll without holding up the others.
+  If every mailbox fails, polling backs off exponentially, up to 5 minutes.
+- **Unknown labels.** A configured label a mailbox doesn't have is logged once as
+  `gmail_label_unknown`.
+
+### Email document shape
+
+```json
+{
+  "_key": "gmail_3f9a1c2b7d4e5f60_18c2a1b2c3d4e5f6",
+  "schema_version": 4,
+  "source": "gmail",
+  "kind": "email",
+  "source_id": "18c2a1b2c3d4e5f6",
+  "scope": { "tenant_id": "example.com", "container_id": "3f9a1c2b7d4e5f60", "path": [] },
+  "created_at": "2024-05-23T21:33:20Z",
+  "updated_at": null,
+  "ingested_at": "2024-05-23T21:34:02.512000Z",
+  "expires_at": "2024-06-22T21:33:20Z",
+  "payload": {
+    "kind": "email",
+    "subject": "Q2 numbers",
+    "from": { "name": "Grace Hopper", "address": "grace@example.com" },
+    "to": [{ "name": "Ada Lovelace", "address": "ada@example.com" }],
+    "cc": [], "bcc": [], "reply_to": [],
+    "message_id_header": "<CAF=abc123@mail.gmail.com>",
+    "in_reply_to": null,
+    "references": [],
+    "thread_id": "18c2a1b2c3d4e5f6",
+    "label_ids": ["INBOX", "UNREAD"],
+    "snippet": "Hi Ada, the numbers for Q2 & Q3 are attached",
+    "body_text": "Hi Ada,\nSee Q2.",
+    "has_attachments": true,
+    "attachment_names": ["q2.pdf"]
+  },
+  "raw": { "...": "the Gmail API message, per GMAIL_RAW_MODE" }
+}
+```
+
+- `created_at` is Gmail's `internalDate`, when Google received the message.
+- `body_text` is the first inline `text/plain` part, or else the `text/html` part
+  converted to text. Encoded subjects and names (RFC 2047) are decoded.
+- `thread_id` is Gmail's thread; `message_id_header`, `in_reply_to` and `references`
+  allow threading across mailboxes.
+
+### Gmail privacy notes
+
+Email holds personal and sensitive data. Beyond the read-only scope:
+
+- Write Gmail to its own collection (the Compose service uses `emails`), and give
+  readers a dedicated ArangoDB user with access to that collection only.
+- `GMAIL_KEY_MODE=hashed` (the default) keeps mailbox addresses out of document keys,
+  cursors and logs. Note that the address is still present in the payload headers.
+- Use `GMAIL_STORE_BODY=false`, `GMAIL_STORE_BCC=false` and `GMAIL_RAW_MODE=none` for
+  metadata-only deployments.
+- Retention applies as for any source. See [Retention](#retention).
+- Keep `secrets/` out of version control (it is in `.gitignore`).
+
 ## Not yet supported
 
 These are deliberately out of scope for the MVP. Look for `TODO(future):` comments at
@@ -359,6 +519,7 @@ the extension points.
 - Historical backfill (`conversations.history`), reactions and files.
 - Graph modeling (users/channels collections, edges) and ArangoSearch.
 - Queues, batching, and a dead-letter collection.
-- Other sources (Gmail is in progress), OAuth install flow, multi-workspace support,
-  and an admin UI.
+- Gmail: attachment content, sending or modifying mail, Pub/Sub push notifications,
+  full mailbox backfill, and removing messages deleted or moved out of watched labels.
+- Other sources, a Slack OAuth install flow, multi-workspace support, and an admin UI.
 - Running more than one source per process; run one container per source for now.

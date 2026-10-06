@@ -27,6 +27,28 @@ services:
       - connector_data:/data
     restart: unless-stopped
 
+  # Gmail runs as its own connector process (one source per process), writing to its own
+  # collection. Start it with: docker compose --profile gmail up -d
+  connector-gmail:
+    profiles: ["gmail"]
+    build: .
+    env_file: .env
+    environment:
+      SOURCE: gmail
+      ARANGO_HOSTS: http://arangodb:8529
+      ARANGO_COLLECTION: ${GMAIL_ARANGO_COLLECTION:-emails}
+      DEAD_LETTER_PATH: /data/gmail_dead_letter.jsonl
+      # Paths inside the container; put the files in ./secrets/gmail on the host.
+      GMAIL_SERVICE_ACCOUNT_FILE: /secrets/gmail/service-account.json
+      GMAIL_OAUTH_TOKEN_DIR: /secrets/gmail
+    depends_on:
+      arangodb:
+        condition: service_healthy
+    volumes:
+      - connector_data:/data
+      - ./secrets/gmail:/secrets/gmail:ro
+    restart: unless-stopped
+
 volumes:
   arangodb_data:
   arangodb_apps:
