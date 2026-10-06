@@ -15,45 +15,103 @@ writes one document per email, so new mail lands within about a minute.
 ## Setup
 
 Every program that reads Gmail through the API has to be registered with Google as an
-OAuth client in a Google Cloud project. Gmail has no in-app switch for this. The mailbox
-owner (or a Workspace admin) then approves that client. There are two ways to do this,
-chosen with `GMAIL_AUTH_MODE`.
+OAuth client in a Google Cloud project; Gmail has no in-app switch for this. The client
+is then approved either by a Workspace admin (Option A) or by each mailbox owner signing
+in (Option B). `GMAIL_AUTH_MODE` selects which.
 
-### Option A: service account with domain-wide delegation (`service_account`, default)
+### Scopes
 
-Best for Google Workspace and for many mailboxes: one key reads every listed mailbox and
-nobody has to sign in. Needs a Workspace admin.
+The connector needs exactly one scope:
+
+| Scope | Why |
+|---|---|
+| `https://www.googleapis.com/auth/gmail.readonly` | Read messages, labels, history and the profile. Covers everything the connector does |
+
+That is all it requests, in both modes, and it means the connector cannot send, change
+or delete mail. Scopes it deliberately does **not** use:
+
+| Scope | Why not |
+|---|---|
+| `gmail.metadata` | Headers and labels only, and it forbids the `q` search parameter. The connector needs `q` for `lookback` and for catching up after a history gap. Even with `GMAIL_STORE_BODY=false`, it still needs `gmail.readonly` |
+| `gmail.modify`, `gmail.send`, `https://mail.google.com/` | Write access; never needed |
+| `openid`, `email`, `userinfo.*` | Not needed. The auth helper checks which account signed in through the Gmail profile, which `gmail.readonly` covers |
+
+`gmail.readonly` is one of Google's **restricted** scopes. That matters only for an
+External OAuth app published to production, which must then pass Google's verification
+and security assessment. Internal apps, and External apps left in Testing, need no
+verification.
+
+### Choosing an auth mode
+
+| | Option A: service account + domain-wide delegation | Option B: per-mailbox OAuth |
+|---|---|---|
+| `GMAIL_AUTH_MODE` | `service_account` (default) | `oauth` |
+| Who sets it up | A Google Workspace **admin** | Anyone with a Google Cloud project; each mailbox owner signs in once |
+| Works for | Workspace mailboxes in your domain | Workspace **and** personal `@gmail.com` mailboxes |
+| Adding a mailbox | Add it to `GMAIL_MAILBOXES` | Add it, and that person runs `make gmail-auth` |
+| Credentials | One JSON key for every mailbox | One token file per mailbox |
+| Expiry | Key valid until rotated | Lasting refresh tokens (Internal); 7 days in External *Testing* |
+| Revoked by | Admin removing the delegation | The user, under Google Account → Security → Third-party access, or an admin |
+
+**Choose A** for production on Google Workspace: one credential, no per-user steps, it
+scales to many mailboxes, and access is controlled centrally by the admin.
+
+**Choose B** when you aren't a Workspace admin, for personal Gmail, for a small number
+of mailboxes, or for trying the connector against your own mailbox. Each mailbox
+explicitly consents, and nobody holds a domain-wide key.
+
+### Option A: service account with domain-wide delegation
 
 1. In [Google Cloud Console](https://console.cloud.google.com/), select or create a
    project, then **APIs & Services → Library → Gmail API → Enable**.
-2. **IAM & Admin → Service accounts → Create service account**, then **Keys → Add key →
-   JSON**.
-3. In the Workspace Admin console, go to **Security → Access and data control → API
-   controls → Manage domain-wide delegation**. Add the service account's client ID and
-   grant exactly `https://www.googleapis.com/auth/gmail.readonly`.
+2. Create a service account, either way:
+   - **Gmail API page → Create credentials**, then choose **Application data**. The
+     wizard creates the service account.
+   - **IAM & Admin → Service accounts → Create service account**.
+
+   Then open it, go to **Keys → Add key → Create new key → JSON**, and note its
+   **Client ID** (a number).
+3. In the Workspace Admin console (admin.google.com), go to **Security → Access and
+   data control → API controls → Manage domain-wide delegation → Add new**. Enter the
+   Client ID and exactly `https://www.googleapis.com/auth/gmail.readonly`. It can take
+   a few minutes to apply.
 4. Save the key as `secrets/gmail/service-account.json` and set
-   `GMAIL_SERVICE_ACCOUNT_FILE` to it.
+   `GMAIL_SERVICE_ACCOUNT_FILE` to it. Treat the key like a password: it can read every
+   mailbox in the domain.
 
-### Option B: per-mailbox OAuth (`oauth`)
-
-For personal `@gmail.com` accounts, or when you are not a Workspace admin. Each mailbox
-owner signs in once.
+### Option B: per-mailbox OAuth
 
 1. In [Google Cloud Console](https://console.cloud.google.com/), select or create a
    project, then **APIs & Services → Library → Gmail API → Enable**.
-2. **APIs & Services → OAuth consent screen** (called **Google Auth Platform** in the
-   newer console):
-   - **Internal**, if offered (the project belongs to your Workspace org). There is no
-     verification and no test-user list.
-   - Otherwise **External**, left in *Testing*, with each mailbox added as a test user.
-     In Testing, refresh tokens expire after 7 days, so re-run step 4 weekly or publish
-     the app.
-3. **APIs & Services → Credentials → Create credentials → OAuth client ID → Desktop
-   app**. The **Create credentials** button on the Gmail API page does the same thing
-   through a wizard. Credentials belong to the project, and the Gmail scope comes from
-   the sign-in in step 4. If asked what data you'll access, choose **User data**
-   (**Application data** creates a service account, which is Option A). Download the
-   JSON as `secrets/gmail/client.json`.
+2. **Configure the consent screen** (**APIs & Services → OAuth consent screen**, called
+   **Google Auth Platform** in the newer console). If you use the wizard in step 3, it
+   walks you through this.
+   - **Audience:** **Internal** if offered (the project belongs to your Workspace org).
+     There is no verification and no test-user list, and only accounts in your domain
+     can sign in. Otherwise **External**, left in *Testing*, with each mailbox added
+     under **Test users**. Refresh tokens issued in Testing expire after 7 days, so you
+     would re-run step 4 weekly.
+   - **Branding:** an app name such as `Arango Connector` and a support email.
+   - **Data access (scopes):** add `https://www.googleapis.com/auth/gmail.readonly`.
+     This records what the app asks for. The helper requests the scope at sign-in
+     either way.
+3. **Create the OAuth client.** Both ways give the same result: credentials belong to
+   the project, not to one API, and Gmail access comes from the scope requested at
+   sign-in.
+   - **Way 1: the wizard, from the Gmail API page.** Click **Create credentials**,
+     choose **User data**, and follow the steps through the consent screen, scopes, and
+     an OAuth client of type **Desktop app**. Use this for a new project: it does
+     step 2 and this step in one guided flow, so nothing is missed.
+   - **Way 2: from APIs & Services → Credentials.** Click **Create credentials → OAuth
+     client ID → Desktop app**. Use this once the consent screen is already set up,
+     when adding another client, or in a shared project where you don't want the
+     wizard changing the consent screen.
+
+   Choose **Desktop app**: the helper signs in through a temporary local web server
+   (`localhost`), which is the flow Desktop clients are made for. **Web application**
+   clients need fixed redirect URLs and won't work with it. Download the JSON as
+   `secrets/gmail/client.json`. It identifies the app, not any user, but keep it
+   private anyway.
 4. For each mailbox, run the helper. It opens a browser, asks for read-only access,
    checks you signed in as that mailbox, and writes `<mailbox>.json` (mode `0600`):
 
