@@ -49,9 +49,11 @@ owner signs in once.
      In Testing, refresh tokens expire after 7 days, so re-run step 4 weekly or publish
      the app.
 3. **APIs & Services → Credentials → Create credentials → OAuth client ID → Desktop
-   app** (credentials are created at project level, not on the Gmail API page). If
-   the wizard asks what data you'll access, choose **User data**. Download the JSON as
-   `secrets/gmail/client.json`.
+   app**. The **Create credentials** button on the Gmail API page does the same thing
+   through a wizard. Credentials belong to the project, and the Gmail scope comes from
+   the sign-in in step 4. If asked what data you'll access, choose **User data**
+   (**Application data** creates a service account, which is Option A). Download the
+   JSON as `secrets/gmail/client.json`.
 4. For each mailbox, run the helper. It opens a browser, asks for read-only access,
    checks you signed in as that mailbox, and writes `<mailbox>.json` (mode `0600`):
 
