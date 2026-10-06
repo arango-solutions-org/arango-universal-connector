@@ -7,6 +7,7 @@ mail.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -46,6 +47,18 @@ def build_credentials(
     return Credentials.from_authorized_user_file(str(token_path(token_dir, mailbox)), SCOPES)
 
 
+def client_type(client_secrets: Path) -> str:
+    """``"installed"`` (Desktop app) or ``"web"``, as Google labels the client JSON."""
+    try:
+        data = json.loads(client_secrets.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"cannot read OAuth client JSON {client_secrets}: {exc}") from None
+    for kind in ("installed", "web"):
+        if isinstance(data, dict) and kind in data:
+            return kind
+    raise ValueError(f"{client_secrets} is not an OAuth client JSON (no 'installed' or 'web')")
+
+
 def auth_main(argv: list[str] | None = None) -> int:
     """``arango-connector-gmail-auth``: authorise one mailbox and save its token file.
 
@@ -75,7 +88,27 @@ def auth_main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="print the consent URL instead of opening a browser",
     )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=0,
+        help="local port for Google's redirect (default: any free port). Set it to "
+        "forward the port over SSH when running on a remote machine",
+    )
     args = parser.parse_args(argv)
+
+    try:
+        kind = client_type(args.client_secrets)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    if kind != "installed":
+        print(
+            f"{args.client_secrets} is a '{kind}' OAuth client. This helper needs a "
+            "'Desktop app' client: create one under APIs & Services -> Credentials.",
+            file=sys.stderr,
+        )
+        return 2
 
     from google_auth_oauthlib.flow import InstalledAppFlow
 
@@ -84,7 +117,7 @@ def auth_main(argv: list[str] | None = None) -> int:
     mailbox = args.mailbox.lower()
     flow = InstalledAppFlow.from_client_secrets_file(str(args.client_secrets), SCOPES)
     credentials = flow.run_local_server(
-        port=0, login_hint=mailbox, open_browser=not args.no_browser
+        port=args.port, login_hint=mailbox, open_browser=not args.no_browser
     )
 
     signed_in = str(GoogleGmailClient(credentials).get_profile().get("emailAddress", ""))

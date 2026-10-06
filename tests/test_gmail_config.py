@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from arango_connector.config import ConfigError, CoreSettings, load_settings
 from arango_connector.registry import build_source
 from arango_connector.sources.gmail.adapter import GmailPollingAdapter
-from arango_connector.sources.gmail.auth import SCOPES, build_credentials
+from arango_connector.sources.gmail.auth import SCOPES, auth_main, build_credentials, client_type
 from arango_connector.sources.gmail.config import GmailSettings, parse_duration
 from arango_connector.state import InMemoryStateStore
 
@@ -215,3 +215,33 @@ def test_gmail_config_errors_surface_from_the_registry(monkeypatch: pytest.Monke
     monkeypatch.setenv("SOURCE", "gmail")
     with pytest.raises(ConfigError, match="GMAIL_MAILBOXES"):
         build_source(load_settings(CoreSettings), InMemoryStateStore())
+
+
+# -- auth helper -------------------------------------------------------------------
+
+
+def _client_json(tmp_path: Path, kind: str) -> Path:
+    path = tmp_path / f"{kind}.json"
+    path.write_text(json.dumps({kind: {"client_id": "x", "client_secret": "y"}}))
+    return path
+
+
+def test_client_type_detection(tmp_path: Path) -> None:
+    assert client_type(_client_json(tmp_path, "installed")) == "installed"
+    assert client_type(_client_json(tmp_path, "web")) == "web"
+    bogus = tmp_path / "bogus.json"
+    bogus.write_text("{}")
+    with pytest.raises(ValueError, match="not an OAuth client JSON"):
+        client_type(bogus)
+    with pytest.raises(ValueError, match="cannot read"):
+        client_type(tmp_path / "missing.json")
+
+
+def test_auth_helper_rejects_web_clients(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = auth_main(
+        ["--client-secrets", str(_client_json(tmp_path, "web")), "--mailbox", "a@example.com"]
+    )
+    assert code == 2
+    assert "needs a 'Desktop app' client" in capsys.readouterr().err

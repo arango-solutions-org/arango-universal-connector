@@ -121,8 +121,21 @@ explicitly consents, and nobody holds a domain-wide key.
    #         --mailbox ada@example.com --out-dir secrets/gmail
    ```
 
-   On a headless machine, add `ARGS=--no-browser` (or `--no-browser`) to print the
-   consent URL instead.
+   Google redirects the browser to `http://localhost:<port>` **on the machine running
+   the helper**, so the browser and the helper must be on the same machine. For a
+   remote or headless server, either:
+   - run the helper on your laptop and copy the token file to the server's
+     `secrets/gmail/`; or
+   - fix the port and forward it over SSH, then open the printed URL in your local
+     browser:
+
+     ```bash
+     ssh -L 8765:localhost:8765 server      # on your laptop
+     make gmail-auth MAILBOX=ada@example.com ARGS="--port 8765 --no-browser"   # on the server
+     ```
+
+   The helper only accepts **Desktop app** clients and says so if given a Web client.
+   A browser-based **Connect** flow for Web clients is planned (SE-138).
 5. Set `GMAIL_AUTH_MODE=oauth` and `GMAIL_OAUTH_TOKEN_DIR=secrets/gmail`.
 
 The connector refuses to start if the key file, or any mailbox's token file, is missing.
