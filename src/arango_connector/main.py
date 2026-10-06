@@ -7,9 +7,9 @@ import signal
 import sys
 from types import FrameType
 
-from arango_connector.config import ConfigError, load_settings
+from arango_connector.config import ConfigError, CoreSettings, load_settings
 from arango_connector.pipeline import Pipeline
-from arango_connector.registry import build_sink, build_source
+from arango_connector.registry import build_sink, build_source, build_state_store
 
 logger = logging.getLogger("arango_connector")
 
@@ -44,7 +44,7 @@ def configure_logging(level: str) -> None:
 def main() -> int:
     """Run the connector. Returns a process exit code."""
     try:
-        settings = load_settings()
+        settings = load_settings(CoreSettings)
     except ConfigError as exc:
         print(exc, file=sys.stderr)
         return 2
@@ -52,12 +52,18 @@ def main() -> int:
     configure_logging(settings.log_level)
 
     try:
+        state = build_state_store(settings)
         pipeline = Pipeline(
-            source=build_source(settings),
+            source=build_source(settings, state),
             sink=build_sink(settings),
             dead_letter_path=settings.dead_letter_path,
             retention_days=settings.retention_days,
+            state=state,
         )
+    except ConfigError as exc:
+        # Source-specific settings are only loaded once the source is known.
+        print(exc, file=sys.stderr)
+        return 2
     except Exception:
         logger.exception("pipeline_build_failed")
         return 1

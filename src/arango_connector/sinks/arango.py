@@ -1,24 +1,22 @@
-"""ArangoDB sink: idempotent upserts of Envelopes into a document collection."""
+"""ArangoDB sink: idempotent upserts of Records into a document collection."""
 
 from __future__ import annotations
 
 import logging
 from typing import Any
 
-import requests
 from arango import ArangoClient
 from arango.collection import StandardCollection
 from arango.database import StandardDatabase
-from arango.exceptions import ArangoServerError, DatabaseCreateError
-from tenacity import (
-    Retrying,
-    before_sleep_log,
-    retry_if_exception,
-    stop_after_attempt,
-    wait_exponential,
-)
+from arango.exceptions import ArangoServerError
 
-from arango_connector.envelope import Envelope
+from arango_connector.arango_common import (
+    ArangoWriteError,
+    connect,
+    ensure_collection,
+    retrying,
+)
+from arango_connector.record import Record
 from arango_connector.sinks.base import Sink
 
 logger = logging.getLogger(__name__)
@@ -27,14 +25,30 @@ logger = logging.getLogger(__name__)
 # TODO(future): users/channels collections, edge collections (authored, reply_to,
 # posted_in) and an ArangoSearch view would be set up alongside these.
 INDEXES: tuple[tuple[str, ...], ...] = (
-    ("channel_id", "created_at"),
-    ("source", "workspace_id", "channel_id"),
+    ("scope.container_id", "created_at"),
+    ("source", "scope.tenant_id", "scope.container_id"),
+    ("kind",),
 )
 
-# Retention is enforced by a TTL index on the message timestamp, so the window is
-# measured from when a message was posted rather than when it was ingested.
-TTL_FIELD = "created_at"
-SECONDS_PER_DAY = 86400
+# Retention is enforced by a TTL index on ``expires_at``, which the pipeline stamps as
+# (created_at or ingested_at) + RETENTION_DAYS. expireAfter=0 means "delete once the
+# stored date has passed", so records without a created_at still expire.
+TTL_FIELD = "expires_at"
+TTL_EXPIRE_AFTER = 0
+
+# Re-derives expires_at for documents whose value does not match the current window:
+# documents written before expires_at existed (schema v3), and every document after
+# RETENTION_DAYS changes. Compared at millisecond precision, which is all AQL keeps.
+_RECONCILE_EXPIRY_AQL = """
+FOR d IN @@collection
+    LET base = d.created_at != null ? d.created_at : d.ingested_at
+    FILTER base != null
+    LET expected = DATE_ADD(base, @days, "day")
+    FILTER d.expires_at == null OR DATE_TIMESTAMP(d.expires_at) != DATE_TIMESTAMP(expected)
+    UPDATE d WITH { expires_at: DATE_ISO8601(expected) } IN @@collection
+    COLLECT WITH COUNT INTO updated
+    RETURN updated
+"""
 
 
 def ttl_expiry_seconds(index: dict[str, Any]) -> int | None:
@@ -51,39 +65,14 @@ def ttl_expiry_seconds(index: dict[str, Any]) -> int | None:
     return None
 
 
-class ArangoWriteError(Exception):
-    """One or more documents in a batch failed to write."""
-
-    def __init__(self, errors: list[ArangoServerError]) -> None:
-        self.errors = errors
-        codes = sorted({str(e.http_code) for e in errors})
-        super().__init__(
-            f"{len(errors)} document(s) failed to write (http_codes={','.join(codes)}): "
-            f"{errors[0].error_message}"
-        )
-
-
-def _is_retryable(exc: BaseException) -> bool:
-    """Retry connection problems and transient server errors, not client mistakes."""
-    # python-arango raises the builtin ConnectionAbortedError once its own
-    # per-host attempts are exhausted; raw requests errors can also surface.
-    if isinstance(exc, ConnectionError | requests.exceptions.RequestException):
-        return True
-    if isinstance(exc, ArangoServerError):
-        return exc.http_code is None or exc.http_code >= 500 or exc.http_code in (408, 409, 429)
-    if isinstance(exc, ArangoWriteError):
-        return any(_is_retryable(e) for e in exc.errors)
-    return False
-
-
 class ArangoSink(Sink):
-    """Writes Envelopes into a single ArangoDB document collection.
+    """Writes Records into a single ArangoDB document collection.
 
     Idempotency comes from the deterministic ``_key`` plus ``overwrite_mode="replace"``:
-    re-delivering the same message overwrites the existing document instead of
-    creating a duplicate. Replace rather than update because an Envelope is always a
-    whole document: update merges nested objects, so keys an edit removed from ``raw``
-    would otherwise survive the write.
+    re-delivering the same item overwrites the existing document instead of creating a
+    duplicate. Replace rather than update because a Record is always a whole document:
+    update merges nested objects, so keys an edit removed from ``raw`` would otherwise
+    survive the write.
     """
 
     def __init__(
@@ -117,27 +106,11 @@ class ArangoSink(Sink):
     def setup(self) -> None:
         """Create the database, collection and indexes if missing. Idempotent.
 
-        Also reconciles the retention TTL index, which can delete existing documents.
+        Also reconciles retention (the TTL index and stored ``expires_at`` values),
+        which can delete existing documents.
         """
-        self._client = ArangoClient(hosts=self.hosts)
-        sys_db = self._client.db("_system", username=self._username, password=self._password)
-
-        if not sys_db.has_database(self.db_name):
-            try:
-                sys_db.create_database(self.db_name)
-                logger.info("arango_database_created db=%s", self.db_name)
-            except DatabaseCreateError:
-                # Lost a race with another process creating it; fine if it now exists.
-                if not sys_db.has_database(self.db_name):
-                    raise
-
-        self._db = self._client.db(self.db_name, username=self._username, password=self._password)
-
-        if not self._db.has_collection(self.collection_name):
-            self._db.create_collection(self.collection_name)
-            logger.info(
-                "arango_collection_created db=%s collection=%s", self.db_name, self.collection_name
-            )
+        self._client, self._db = connect(self.hosts, self._username, self._password, self.db_name)
+        ensure_collection(self._db, self.collection_name)
         collection = self._db.collection(self.collection_name)
 
         for fields in INDEXES:
@@ -149,6 +122,7 @@ class ArangoSink(Sink):
                 )
 
         self._reconcile_ttl_index(collection)
+        self._reconcile_expiry()
 
         self._collection = collection
         logger.info(
@@ -162,11 +136,11 @@ class ArangoSink(Sink):
     def _reconcile_ttl_index(self, collection: StandardCollection) -> None:
         """Make the collection's TTL index match ``retention_days``.
 
-        ArangoDB allows at most one TTL index per collection, so changing the
-        retention window means dropping the old index before adding the new one;
-        ``add_index`` alone would fail once ``expireAfter`` differs.
+        ArangoDB allows at most one TTL index per collection, so an index on another
+        field or with another ``expireAfter`` (such as the pre-v4 index on
+        ``created_at``) is dropped before the desired one is added.
         """
-        desired = self.retention_days * SECONDS_PER_DAY if self.retention_days > 0 else None
+        wanted = self.retention_days > 0
         indexes = collection.indexes()
         # Not a list only for async/batch execution, which this sink never uses.
         if not isinstance(indexes, list):
@@ -174,10 +148,10 @@ class ArangoSink(Sink):
         existing = [idx for idx in indexes if idx["type"] == "ttl"]
 
         if (
-            desired is not None
+            wanted
             and len(existing) == 1
             and existing[0]["fields"] == [TTL_FIELD]
-            and ttl_expiry_seconds(existing[0]) == desired
+            and ttl_expiry_seconds(existing[0]) == TTL_EXPIRE_AFTER
         ):
             return
 
@@ -189,10 +163,12 @@ class ArangoSink(Sink):
                 idx["fields"],
             )
 
-        if desired is None:
+        if not wanted:
             return
 
-        collection.add_index({"type": "ttl", "fields": [TTL_FIELD], "expireAfter": desired})
+        collection.add_index(
+            {"type": "ttl", "fields": [TTL_FIELD], "expireAfter": TTL_EXPIRE_AFTER}
+        )
         logger.warning(
             "arango_ttl_index_created collection=%s field=%s retention_days=%s "
             "documents older than this are removed",
@@ -200,6 +176,29 @@ class ArangoSink(Sink):
             TTL_FIELD,
             self.retention_days,
         )
+
+    def _reconcile_expiry(self) -> None:
+        """Bring stored ``expires_at`` values in line with the current window.
+
+        ``expires_at`` is fixed when a document is written, so without this a changed
+        RETENTION_DAYS would only apply to new documents, and documents written before
+        ``expires_at`` existed would never expire.
+        """
+        if self.retention_days <= 0 or self._db is None:
+            return
+        bind_vars: dict[str, Any] = {
+            "@collection": self.collection_name,
+            "days": self.retention_days,
+        }
+        cursor = self._db.aql.execute(_RECONCILE_EXPIRY_AQL, bind_vars=bind_vars)
+        updated = next(iter(cursor), 0)  # type: ignore[arg-type]
+        if updated:
+            logger.warning(
+                "arango_expiry_reconciled collection=%s updated=%s retention_days=%s",
+                self.collection_name,
+                updated,
+                self.retention_days,
+            )
 
     def close(self) -> None:
         """Close the HTTP session(s)."""
@@ -209,19 +208,14 @@ class ArangoSink(Sink):
 
     # -- writes ------------------------------------------------------------
 
-    def write(self, envelopes: list[Envelope]) -> None:
-        """Upsert envelopes, retrying transient failures; re-raises on final failure."""
-        if not envelopes:
+    def write(self, records: list[Record[Any]]) -> None:
+        """Upsert records, retrying transient failures; re-raises on final failure."""
+        if not records:
             return
-        docs = [e.to_document() for e in envelopes]
-        retrying = Retrying(
-            stop=stop_after_attempt(self._retry_attempts),
-            wait=wait_exponential(multiplier=self._retry_wait_initial, max=self._retry_wait_max),
-            retry=retry_if_exception(_is_retryable),
-            before_sleep=before_sleep_log(logger, logging.WARNING),
-            reraise=True,
+        docs = [r.to_document() for r in records]
+        retrying(self._retry_attempts, self._retry_wait_initial, self._retry_wait_max)(
+            self._write_once, docs
         )
-        retrying(self._write_once, docs)
 
     def _write_once(self, docs: list[dict[str, Any]]) -> None:
         collection = self._require_collection()

@@ -1,4 +1,9 @@
-"""Runtime configuration, read from the environment and an optional ``.env`` file."""
+"""Runtime configuration, read from the environment and an optional ``.env`` file.
+
+``CoreSettings`` holds what every deployment needs. Each source (and sink) keeps its
+own settings class next to its code and loads it in its registry factory, so a
+deployment only needs the variables of the source it actually runs.
+"""
 
 from __future__ import annotations
 
@@ -9,14 +14,15 @@ from pydantic import Field, SecretStr, ValidationError, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
-def _split_csv(value: Any) -> Any:
+def split_csv(value: Any) -> Any:
+    """Split a comma-separated env value into a list. Use in ``mode="before"`` validators."""
     if isinstance(value, str):
         return [item.strip() for item in value.split(",") if item.strip()]
     return value
 
 
-class Settings(BaseSettings):
-    """All connector settings. Field names map to upper-case environment variables."""
+class ConnectorSettings(BaseSettings):
+    """Base for every settings class. Field names map to upper-case environment variables."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -25,30 +31,30 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
+
+class CoreSettings(ConnectorSettings):
+    """Settings shared by every deployment, whatever the source."""
+
     source: str = "slack"
     sink: str = "arango"
-
-    # TODO(future): source-specific settings should move into per-adapter settings
-    # classes once there is more than one source.
-    slack_bot_token: SecretStr
-    slack_app_token: SecretStr
-    slack_channel_ids: Annotated[set[str], NoDecode, Field(min_length=1)]
 
     arango_hosts: Annotated[list[str], NoDecode] = ["http://localhost:8529"]
     arango_username: str = "root"
     arango_password: SecretStr
     arango_db: str = "connector"
     arango_collection: str = "messages"
-    # Days to keep messages, counted from when they were posted. 0 disables retention.
+    # Holds source cursors (e.g. Gmail historyId). Never subject to retention.
+    state_collection: str = "connector_state"
+    # Days to keep records, counted from when they were posted. 0 disables retention.
     retention_days: int = Field(default=30, ge=0)
 
     dead_letter_path: Path = Path("./dead_letter.jsonl")
     log_level: str = "INFO"
 
-    @field_validator("slack_channel_ids", "arango_hosts", mode="before")
+    @field_validator("arango_hosts", mode="before")
     @classmethod
     def _parse_csv(cls, value: Any) -> Any:
-        return _split_csv(value)
+        return split_csv(value)
 
     @field_validator("log_level")
     @classmethod
@@ -60,13 +66,13 @@ class ConfigError(Exception):
     """Raised when required configuration is missing or invalid."""
 
 
-def load_settings(**overrides: Any) -> Settings:
-    """Load settings, turning validation errors into a readable ``ConfigError``.
+def load_settings[S: BaseSettings](cls: type[S], **overrides: Any) -> S:
+    """Load a settings class, turning validation errors into a readable ``ConfigError``.
 
     Error messages name the offending environment variables but never include values.
     """
     try:
-        return Settings(**overrides)
+        return cls(**overrides)
     except ValidationError as exc:
         problems = []
         for err in exc.errors():

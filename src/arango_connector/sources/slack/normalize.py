@@ -1,16 +1,17 @@
-"""Pure mapping from a Slack ``message`` event to an Envelope. No I/O."""
+"""Pure mapping from a Slack ``message`` event to a Record. No I/O."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from arango_connector.envelope import Envelope, make_key
+from arango_connector.payloads import MessagePayload
+from arango_connector.record import Record, Scope, make_key
 
 SOURCE = "slack"
 
 # Subtypes that represent a genuinely new message. Everything else is skipped.
-# TODO(future): handle "message_deleted" (deletes); needs a delete op on Envelope/Sink.
+# TODO(future): handle "message_deleted" (deletes); needs a delete op on Record/Sink.
 # TODO(future): handle "file_share" and reactions once files/reactions are in scope.
 INGESTED_SUBTYPES = frozenset({"bot_message", "thread_broadcast"})
 
@@ -33,7 +34,7 @@ def slack_ts_to_datetime(ts: str) -> datetime:
 def _flatten_edit(event: dict[str, Any]) -> dict[str, Any] | None:
     """Turn a ``message_changed`` event into the plain message event it now represents.
 
-    Returns a copy carrying the edited message's own ``ts``, so the Envelope keys to
+    Returns a copy carrying the edited message's own ``ts``, so the Record keys to
     the document already stored for the original. ``previous_message`` is deliberately
     dropped: it holds the pre-edit text, which is the content the edit removed.
     """
@@ -45,7 +46,7 @@ def _flatten_edit(event: dict[str, Any]) -> dict[str, Any] | None:
     flattened["type"] = "message"
     flattened["channel"] = event.get("channel")
     # The workspace only appears on the outer event for some payloads, and a replace
-    # write would otherwise clear the workspace_id stored with the original message.
+    # write would otherwise clear the tenant_id stored with the original message.
     if "team" not in flattened and "team" in event:
         flattened["team"] = event["team"]
     return flattened
@@ -58,8 +59,8 @@ def _bot_name(event: dict[str, Any]) -> str | None:
     return event.get("username") or profile_name or None
 
 
-def normalize(event: dict[str, Any], team_id: str | None) -> Envelope | None:
-    """Map a Slack event to an Envelope, or return ``None`` if it should be skipped.
+def normalize(event: dict[str, Any], team_id: str | None) -> Record[MessagePayload] | None:
+    """Map a Slack event to a Record, or return ``None`` if it should be skipped.
 
     ``message_changed`` is mapped onto the original message's key so an edit overwrites
     what is stored. Skips non-``message`` events, subtypes other than ``bot_message`` /
@@ -91,24 +92,25 @@ def normalize(event: dict[str, Any], team_id: str | None) -> Envelope | None:
     # Human names need a users.info lookup, which the adapter does; bots carry theirs.
     author_name = _bot_name(event) if is_bot else None
 
-    thread_ts = event.get("thread_ts")
-    thread_parent = thread_ts if thread_ts and thread_ts != ts else None
+    thread_ts = event.get("thread_ts") or None
 
     edited = event.get("edited")
     edited_ts = edited.get("ts") if isinstance(edited, dict) else None
 
-    return Envelope(
+    return Record[MessagePayload](
         key=make_key(SOURCE, channel_id, ts),
         source=SOURCE,
-        workspace_id=team_id or event.get("team"),
-        channel_id=channel_id,
-        author_id=author_id,
-        author_name=author_name,
-        author_type="bot" if is_bot else "user",
-        text=event.get("text") or "",
-        source_ts=ts,
+        source_id=ts,
+        scope=Scope(tenant_id=team_id or event.get("team"), container_id=channel_id),
         created_at=slack_ts_to_datetime(ts),
-        edited_at=slack_ts_to_datetime(edited_ts) if edited_ts else None,
-        thread_parent=thread_parent,
+        updated_at=slack_ts_to_datetime(edited_ts) if edited_ts else None,
+        payload=MessagePayload(
+            author_id=author_id,
+            author_name=author_name,
+            author_type="bot" if is_bot else "user",
+            text=event.get("text") or "",
+            thread_id=thread_ts,
+            parent_id=thread_ts if thread_ts and thread_ts != ts else None,
+        ),
         raw=event,
     )
