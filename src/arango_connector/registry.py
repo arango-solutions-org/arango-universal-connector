@@ -49,7 +49,7 @@ def build_arango_sink(settings: CoreSettings) -> Sink:
         password=settings.arango_password.get_secret_value(),
         db_name=settings.arango_db,
         collection_name=settings.arango_collection,
-        retention_days=settings.retention_days,
+        retention=settings.retention_policy(),
     )
 
 

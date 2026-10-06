@@ -13,6 +13,8 @@ from typing import Annotated, Any
 from pydantic import Field, SecretStr, ValidationError, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from arango_connector.retention import AgeField, RetentionMode, RetentionPolicy
+
 
 def split_csv(value: Any) -> Any:
     """Split a comma-separated env value into a list. Use in ``mode="before"`` validators."""
@@ -45,8 +47,12 @@ class CoreSettings(ConnectorSettings):
     arango_collection: str = "messages"
     # Holds source cursors (e.g. Gmail historyId). Never subject to retention.
     state_collection: str = "connector_state"
-    # Days to keep envelopes, counted from when they were posted. 0 disables retention.
+    # Days to keep envelopes. 0 disables retention. See retention.py for the two modes.
     retention_days: int = Field(default=30, ge=0)
+    # "expiry": each document stores its own expires_at (window fixed at write time).
+    # "age": documents expire retention_days after retention_age_field.
+    retention_mode: RetentionMode = "expiry"
+    retention_age_field: AgeField = "created_at"
 
     dead_letter_path: Path = Path("./dead_letter.jsonl")
     log_level: str = "INFO"
@@ -55,6 +61,11 @@ class CoreSettings(ConnectorSettings):
     @classmethod
     def _parse_csv(cls, value: Any) -> Any:
         return split_csv(value)
+
+    def retention_policy(self) -> RetentionPolicy:
+        return RetentionPolicy(
+            days=self.retention_days, mode=self.retention_mode, age_field=self.retention_age_field
+        )
 
     @field_validator("log_level")
     @classmethod

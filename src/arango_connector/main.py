@@ -57,7 +57,7 @@ def main() -> int:
             source=build_source(settings, state),
             sink=build_sink(settings),
             dead_letter_path=settings.dead_letter_path,
-            retention_days=settings.retention_days,
+            retention=settings.retention_policy(),
             state=state,
         )
     except ConfigError as exc:

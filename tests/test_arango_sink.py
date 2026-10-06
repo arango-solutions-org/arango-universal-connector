@@ -9,19 +9,12 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterator
-from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from arango_connector.envelope import Envelope
-from arango_connector.sinks.arango import (
-    INDEXES,
-    TTL_EXPIRE_AFTER,
-    TTL_FIELD,
-    ArangoSink,
-    ttl_expiry_seconds,
-)
+from arango_connector.retention import RetentionPolicy
+from arango_connector.sinks.arango import INDEXES, ArangoSink, ttl_expiry_seconds
 from arango_connector.sources.slack.normalize import normalize
 
 if TYPE_CHECKING:
@@ -43,14 +36,14 @@ def make_sink(arango_conn: ArangoConn) -> Iterator[MakeSink]:
     """
     created: list[ArangoSink] = []
 
-    def _make(retention_days: int = 0) -> ArangoSink:
+    def _make(retention_days: int = 0, **policy: Any) -> ArangoSink:
         s = ArangoSink(
             hosts=arango_conn.hosts,
             username=arango_conn.username,
             password=arango_conn.password,
             db_name=arango_conn.db_name,
             collection_name="messages",
-            retention_days=retention_days,
+            retention=RetentionPolicy(retention_days, **policy),
             retry_wait_initial=0.01,
         )
         created.append(s)
@@ -147,10 +140,43 @@ def test_ttl_index_created_and_setup_is_idempotent(make_sink: MakeSink) -> None:
 
     ttl = _ttl_indexes(sink)
     assert len(ttl) == 1
-    assert ttl[0]["fields"] == [TTL_FIELD]
-    assert ttl_expiry_seconds(ttl[0]) == TTL_EXPIRE_AFTER
+    assert ttl[0]["fields"] == ["expires_at"]
+    assert ttl_expiry_seconds(ttl[0]) == 0
     # Same index, not dropped and recreated on the second start.
     assert ttl[0]["id"] == first_id
+
+
+def test_age_mode_ttl_index(make_sink: MakeSink) -> None:
+    sink = make_sink(retention_days=30, mode="age", age_field="ingested_at")
+    sink.setup()
+
+    ttl = _ttl_indexes(sink)
+    assert len(ttl) == 1
+    assert ttl[0]["fields"] == ["ingested_at"]
+    assert ttl_expiry_seconds(ttl[0]) == 30 * 86400
+
+
+def test_switching_mode_replaces_the_index(make_sink: MakeSink) -> None:
+    make_sink(retention_days=30, mode="age").setup()
+
+    # A second TTL index would be rejected, so this only passes if the first is dropped.
+    switched = make_sink(retention_days=30)
+    switched.setup()
+
+    ttl = _ttl_indexes(switched)
+    assert len(ttl) == 1
+    assert ttl[0]["fields"] == ["expires_at"]
+
+
+def test_age_mode_window_change_replaces_the_index(make_sink: MakeSink) -> None:
+    make_sink(retention_days=30, mode="age").setup()
+
+    changed = make_sink(retention_days=7, mode="age")
+    changed.setup()
+
+    ttl = _ttl_indexes(changed)
+    assert len(ttl) == 1
+    assert ttl_expiry_seconds(ttl[0]) == 7 * 86400
 
 
 def test_legacy_created_at_ttl_index_is_replaced(make_sink: MakeSink) -> None:
@@ -159,58 +185,29 @@ def test_legacy_created_at_ttl_index_is_replaced(make_sink: MakeSink) -> None:
     assert legacy._collection is not None
     legacy._collection.add_index({"type": "ttl", "fields": ["created_at"], "expireAfter": 86400})
 
-    # A second TTL index would be rejected, so this only passes if the first is dropped.
     upgraded = make_sink(retention_days=30)
     upgraded.setup()
 
     ttl = _ttl_indexes(upgraded)
     assert len(ttl) == 1
-    assert ttl[0]["fields"] == [TTL_FIELD]
+    assert ttl[0]["fields"] == ["expires_at"]
 
 
-def _stamped(envelope: Envelope[Any], days: int) -> Envelope[Any]:
-    assert envelope.created_at is not None
-    return envelope.model_copy(update={"expires_at": envelope.created_at + timedelta(days=days)})
-
-
-def _expires_at(sink: ArangoSink, key: str) -> datetime:
-    assert sink._collection is not None
-    doc = sink._collection.get(key)
-    assert isinstance(doc, dict)
-    return datetime.fromisoformat(doc[TTL_FIELD])
-
-
-def test_changing_retention_rewrites_expires_at(make_sink: MakeSink, load_event: LoadEvent) -> None:
+def test_setup_never_rewrites_stored_documents(make_sink: MakeSink, load_event: LoadEvent) -> None:
+    """Changing the window is applied by reconcile-expiry, not silently at startup."""
     first = make_sink(retention_days=30)
     first.setup()
     env = normalize(load_event("user_message"), "T0TESTTEAM")
-    assert env is not None and env.created_at is not None
-    first.write([_stamped(env, 30)])
+    assert env is not None
+    stamped = RetentionPolicy(30).stamp(env)
+    first.write([stamped])
 
-    changed = make_sink(retention_days=7)
-    changed.setup()
+    make_sink(retention_days=7).setup()
 
-    assert _expires_at(changed, env.key) == env.created_at.replace(
-        microsecond=env.created_at.microsecond // 1000 * 1000
-    ) + timedelta(days=7)
-
-
-def test_documents_without_expires_at_are_backfilled(
-    make_sink: MakeSink, load_event: LoadEvent
-) -> None:
-    """Pre-v4 documents carry no expires_at; setup must give them one or they never expire."""
-    plain = make_sink(retention_days=0)
-    plain.setup()
-    env = normalize(load_event("user_message"), "T0TESTTEAM")
-    assert env is not None and env.created_at is not None
-    plain.write([env])  # expires_at is None
-
-    with_retention = make_sink(retention_days=30)
-    with_retention.setup()
-
-    assert (
-        _expires_at(with_retention, env.key).date() == (env.created_at + timedelta(days=30)).date()
-    )
+    assert first._collection is not None
+    doc = first._collection.get(env.key)
+    assert isinstance(doc, dict)
+    assert doc["expires_at"] == stamped.to_document()["expires_at"]
 
 
 def test_disabling_retention_drops_the_index(make_sink: MakeSink) -> None:
@@ -228,13 +225,10 @@ def test_ttl_field_is_a_date_arango_can_expire(make_sink: MakeSink, load_event: 
     sink.setup()
     env = normalize(load_event("user_message"), "T0TESTTEAM")
     assert env is not None
-    sink.write([_stamped(env, 1)])
+    sink.write([RetentionPolicy(1).stamp(env)])
 
     assert sink._db is not None
-    cursor = sink._db.aql.execute(
-        "FOR m IN messages LIMIT 1 RETURN IS_DATESTRING(m.@field)",
-        bind_vars={"field": TTL_FIELD},
-    )
+    cursor = sink._db.aql.execute("FOR m IN messages LIMIT 1 RETURN IS_DATESTRING(m.expires_at)")
     assert list(cursor) == [True]  # type: ignore[arg-type]
 
 

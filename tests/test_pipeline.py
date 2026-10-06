@@ -10,6 +10,7 @@ from typing import Any
 
 from arango_connector.envelope import Envelope
 from arango_connector.pipeline import Pipeline
+from arango_connector.retention import RetentionPolicy
 from arango_connector.sinks.base import Sink
 from arango_connector.sources.base import EmitFn, SourceAdapter
 from arango_connector.sources.slack.normalize import normalize
@@ -83,7 +84,9 @@ def test_writes_are_forwarded(load_event: LoadEvent, tmp_path: Path) -> None:
 def test_expires_at_is_stamped_from_created_at(load_event: LoadEvent, tmp_path: Path) -> None:
     envelopes = _envelopes(load_event)
     sink = RecordingSink()
-    pipeline = Pipeline(FakeSource(envelopes), sink, tmp_path / "dl.jsonl", retention_days=30)
+    pipeline = Pipeline(
+        FakeSource(envelopes), sink, tmp_path / "dl.jsonl", retention=RetentionPolicy(30)
+    )
 
     pipeline.run()
 
@@ -94,13 +97,15 @@ def test_expires_at_is_stamped_from_created_at(load_event: LoadEvent, tmp_path: 
     pipeline.shutdown()
 
 
-def test_expires_at_falls_back_to_ingested_at(load_event: LoadEvent, tmp_path: Path) -> None:
-    envelope = _envelopes(load_event)[0].model_copy(update={"created_at": None})
-    pipeline = Pipeline(FakeSource([]), RecordingSink(), tmp_path / "dl.jsonl", retention_days=7)
+def test_age_mode_does_not_stamp_expires_at(load_event: LoadEvent, tmp_path: Path) -> None:
+    sink = RecordingSink()
+    policy = RetentionPolicy(30, mode="age")
+    pipeline = Pipeline(FakeSource(_envelopes(load_event)), sink, tmp_path / "dl.jsonl", policy)
 
-    stamped = pipeline.stamp_expiry(envelope)
+    pipeline.run()
 
-    assert stamped.expires_at == envelope.ingested_at + timedelta(days=7)
+    assert all(batch[0].expires_at is None for batch in sink.writes)
+    pipeline.shutdown()
 
 
 def test_no_expires_at_when_retention_disabled(load_event: LoadEvent, tmp_path: Path) -> None:
@@ -179,7 +184,7 @@ def test_prune_drops_entries_past_retention(load_event: LoadEvent, tmp_path: Pat
     old, recent = _envelopes(load_event)
     dead_letter = tmp_path / "dl.jsonl"
     _write_lines(dead_letter, [_aged_line(old, 40), _aged_line(recent, 2)])
-    pipeline = Pipeline(FakeSource([]), RecordingSink(), dead_letter, retention_days=30)
+    pipeline = Pipeline(FakeSource([]), RecordingSink(), dead_letter, retention=RetentionPolicy(30))
 
     assert pipeline.prune_dead_letter() == 1
 
@@ -191,7 +196,7 @@ def test_prune_is_a_no_op_when_retention_disabled(load_event: LoadEvent, tmp_pat
     old, _ = _envelopes(load_event)
     dead_letter = tmp_path / "dl.jsonl"
     _write_lines(dead_letter, [_aged_line(old, 400)])
-    pipeline = Pipeline(FakeSource([]), RecordingSink(), dead_letter, retention_days=0)
+    pipeline = Pipeline(FakeSource([]), RecordingSink(), dead_letter, retention=RetentionPolicy(0))
 
     assert pipeline.prune_dead_letter() == 0
     assert _keys(dead_letter) == [old.key]
@@ -204,7 +209,7 @@ def test_prune_leaves_file_untouched_when_nothing_expires(
     dead_letter = tmp_path / "dl.jsonl"
     _write_lines(dead_letter, [_aged_line(recent, 1)])
     before = dead_letter.read_text()
-    pipeline = Pipeline(FakeSource([]), RecordingSink(), dead_letter, retention_days=30)
+    pipeline = Pipeline(FakeSource([]), RecordingSink(), dead_letter, retention=RetentionPolicy(30))
 
     assert pipeline.prune_dead_letter() == 0
     assert dead_letter.read_text() == before
@@ -217,7 +222,7 @@ def test_prune_keeps_unreadable_lines(load_event: LoadEvent, tmp_path: Path) -> 
         dead_letter,
         [_aged_line(old, 40), "{truncated half-written line", _aged_line(recent, 1)],
     )
-    pipeline = Pipeline(FakeSource([]), RecordingSink(), dead_letter, retention_days=30)
+    pipeline = Pipeline(FakeSource([]), RecordingSink(), dead_letter, retention=RetentionPolicy(30))
 
     assert pipeline.prune_dead_letter() == 1
 
@@ -228,7 +233,7 @@ def test_prune_keeps_unreadable_lines(load_event: LoadEvent, tmp_path: Path) -> 
 
 def test_prune_handles_missing_file(tmp_path: Path) -> None:
     pipeline = Pipeline(
-        FakeSource([]), RecordingSink(), tmp_path / "absent.jsonl", retention_days=30
+        FakeSource([]), RecordingSink(), tmp_path / "absent.jsonl", retention=RetentionPolicy(30)
     )
     assert pipeline.prune_dead_letter() == 0
 
@@ -239,7 +244,7 @@ def test_run_prunes_at_startup_and_shutdown_stops_the_thread(
     old, recent = _envelopes(load_event)
     dead_letter = tmp_path / "dl.jsonl"
     _write_lines(dead_letter, [_aged_line(old, 40), _aged_line(recent, 1)])
-    pipeline = Pipeline(FakeSource([]), RecordingSink(), dead_letter, retention_days=30)
+    pipeline = Pipeline(FakeSource([]), RecordingSink(), dead_letter, retention=RetentionPolicy(30))
 
     pipeline.run()
     assert _keys(dead_letter) == [recent.key]
@@ -250,7 +255,9 @@ def test_run_prunes_at_startup_and_shutdown_stops_the_thread(
 
 
 def test_no_prune_thread_when_retention_disabled(tmp_path: Path) -> None:
-    pipeline = Pipeline(FakeSource([]), RecordingSink(), tmp_path / "dl.jsonl", retention_days=0)
+    pipeline = Pipeline(
+        FakeSource([]), RecordingSink(), tmp_path / "dl.jsonl", retention=RetentionPolicy(0)
+    )
     pipeline.run()
     pipeline.shutdown()
     assert pipeline._prune_thread is None
@@ -276,7 +283,35 @@ def test_prune_falls_back_to_ingested_at(load_event: LoadEvent, tmp_path: Path) 
         "ingested_at": (datetime.now(UTC) - timedelta(days=40)).isoformat(),
     }
     _write_lines(dead_letter, [json.dumps(stale), _aged_line(recent, 1)])
-    pipeline = Pipeline(FakeSource([]), RecordingSink(), dead_letter, retention_days=30)
+    pipeline = Pipeline(FakeSource([]), RecordingSink(), dead_letter, retention=RetentionPolicy(30))
+
+    assert pipeline.prune_dead_letter() == 1
+    assert _keys(dead_letter) == [recent.key]
+
+
+def test_prune_honours_a_stored_expires_at(load_event: LoadEvent, tmp_path: Path) -> None:
+    """In expiry mode the deadline written with the line wins over the current window."""
+    old, recent = _envelopes(load_event)
+    dead_letter = tmp_path / "dl.jsonl"
+    future = (datetime.now(UTC) + timedelta(days=5)).isoformat()
+    kept_by_deadline = json.loads(_aged_line(old, 40)) | {"expires_at": future}
+    _write_lines(dead_letter, [json.dumps(kept_by_deadline), _aged_line(recent, 40)])
+    pipeline = Pipeline(FakeSource([]), RecordingSink(), dead_letter, RetentionPolicy(30))
+
+    assert pipeline.prune_dead_letter() == 1
+    assert _keys(dead_letter) == [old.key]
+
+
+def test_prune_in_age_mode_uses_the_age_field(load_event: LoadEvent, tmp_path: Path) -> None:
+    old, recent = _envelopes(load_event)
+    dead_letter = tmp_path / "dl.jsonl"
+    long_ago = (datetime.now(UTC) - timedelta(days=40)).isoformat()
+    # Posted recently but ingested long ago: only ingested_at should count.
+    stale = json.loads(_aged_line(old, 1)) | {"ingested_at": long_ago}
+    fresh = json.loads(_aged_line(recent, 40)) | {"ingested_at": datetime.now(UTC).isoformat()}
+    _write_lines(dead_letter, [json.dumps(stale), json.dumps(fresh)])
+    policy = RetentionPolicy(30, mode="age", age_field="ingested_at")
+    pipeline = Pipeline(FakeSource([]), RecordingSink(), dead_letter, policy)
 
     assert pipeline.prune_dead_letter() == 1
     assert _keys(dead_letter) == [recent.key]

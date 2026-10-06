@@ -6,11 +6,12 @@ import json
 import logging
 import os
 import threading
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from arango_connector.envelope import Envelope
+from arango_connector.retention import RetentionPolicy
 from arango_connector.sinks.base import Sink
 from arango_connector.sources.base import SourceAdapter
 from arango_connector.state.base import StateStore
@@ -22,22 +23,11 @@ logger = logging.getLogger(__name__)
 PRUNE_INTERVAL_SECONDS = 3600
 
 
-def _retention_base(line: str) -> datetime | None:
-    """Read the time retention counts from (``created_at``, else ``ingested_at``) from one
-    dead-letter line, or ``None`` if unreadable."""
-    try:
-        doc = json.loads(line)
-        parsed = datetime.fromisoformat(doc.get("created_at") or doc["ingested_at"])
-    except (ValueError, TypeError, KeyError, AttributeError):
-        return None
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
-
-
 class Pipeline:
     """Forwards every Envelope emitted by a source to a sink.
 
-    Stamps each Envelope's ``expires_at`` from ``retention_days`` before writing, and applies
-    the same window to the dead-letter file, which the sink's TTL index cannot reach.
+    Stamps each Envelope according to the ``retention`` policy before writing, and applies
+    the same policy to the dead-letter file, which the sink's TTL index cannot reach.
     Sets up the source's ``state`` store, if any, before the source starts.
 
     TODO(future): put a queue between source and sink and batch writes; replace the
@@ -50,7 +40,7 @@ class Pipeline:
         source: SourceAdapter,
         sink: Sink,
         dead_letter_path: Path | str = "./dead_letter.jsonl",
-        retention_days: int = 0,
+        retention: RetentionPolicy | None = None,
         prune_interval_seconds: float = PRUNE_INTERVAL_SECONDS,
         state: StateStore | None = None,
     ) -> None:
@@ -58,7 +48,7 @@ class Pipeline:
         self.sink = sink
         self.state = state
         self.dead_letter_path = Path(dead_letter_path)
-        self.retention_days = retention_days
+        self.retention = retention or RetentionPolicy()
         self._prune_interval = prune_interval_seconds
         self._dead_letter_lock = threading.Lock()
         self._shutdown_lock = threading.Lock()
@@ -77,17 +67,10 @@ class Pipeline:
         )
         self.source.start(emit=self._handle)
 
-    def stamp_expiry(self, envelope: Envelope[Any]) -> Envelope[Any]:
-        """Return ``envelope`` with ``expires_at`` set from the retention window."""
-        if self.retention_days <= 0:
-            return envelope.model_copy(update={"expires_at": None})
-        expires_at = envelope.retention_base + timedelta(days=self.retention_days)
-        return envelope.model_copy(update={"expires_at": expires_at})
-
     def _handle(self, envelope: Envelope[Any]) -> None:
         """Write one envelope; on failure dead-letter it. Never raises."""
         try:
-            envelope = self.stamp_expiry(envelope)
+            envelope = self.retention.stamp(envelope)
             self.sink.write([envelope])
             logger.debug("envelope_written key=%s", envelope.key)
         except Exception as exc:
@@ -115,7 +98,7 @@ class Pipeline:
 
     def _start_pruning(self) -> None:
         """Prune once, then keep pruning on an interval for as long as we run."""
-        if self.retention_days <= 0:
+        if not self.retention.enabled:
             return
         self.prune_dead_letter()
         self._prune_thread = threading.Thread(
@@ -128,25 +111,24 @@ class Pipeline:
             self.prune_dead_letter()
 
     def prune_dead_letter(self) -> int:
-        """Drop dead-lettered documents older than the retention window.
+        """Drop dead-lettered documents whose retention has run out.
 
-        Returns the number of entries removed. Retention is measured from an envelope's
-        ``created_at`` (else ``ingested_at``) with the current window, matching how the
-        sink derives ``expires_at``, so a dead-lettered envelope ages out at the same time as
-        it would have in ArangoDB. Never raises: losing the
-        prune must not take the connector down.
+        Returns the number of entries removed. Expiry comes from the same policy the
+        sink's TTL index enforces (see ``RetentionPolicy.expiry_of``), so a dead-lettered
+        envelope ages out when it would have in ArangoDB. Never raises: losing the prune
+        must not take the connector down.
         """
-        if self.retention_days <= 0:
+        if not self.retention.enabled:
             return 0
-        cutoff = datetime.now(UTC) - timedelta(days=self.retention_days)
+        now = datetime.now(UTC)
         try:
             with self._dead_letter_lock:
-                return self._prune_locked(cutoff)
+                return self._prune_locked(now)
         except Exception:
             logger.exception("dead_letter_prune_failed path=%s", self.dead_letter_path)
             return 0
 
-    def _prune_locked(self, cutoff: datetime) -> int:
+    def _prune_locked(self, now: datetime) -> int:
         if not self.dead_letter_path.is_file():
             return 0
 
@@ -157,13 +139,17 @@ class Pipeline:
             for line in fh:
                 if not line.strip():
                     continue
-                base = _retention_base(line)
-                if base is not None and base < cutoff:
+                try:
+                    doc = json.loads(line)
+                    expires = self.retention.expiry_of(doc)
+                except (ValueError, TypeError, AttributeError):
+                    # A line we cannot read is kept rather than silently destroyed; a
+                    # corrupt half-write should surface as a warning, not as data loss.
+                    unreadable += 1
+                    expires = None
+                if expires is not None and expires <= now:
                     removed += 1
                     continue
-                # A line we cannot read is kept rather than silently destroyed; a
-                # corrupt half-write should surface as a warning, not as data loss.
-                unreadable += base is None
                 kept.append(line if line.endswith("\n") else line + "\n")
 
         if unreadable:
@@ -180,11 +166,11 @@ class Pipeline:
         os.replace(tmp, self.dead_letter_path)
 
         logger.info(
-            "dead_letter_pruned path=%s removed=%s kept=%s retention_days=%s",
+            "dead_letter_pruned path=%s removed=%s kept=%s retention=%s",
             self.dead_letter_path,
             removed,
             len(kept),
-            self.retention_days,
+            self.retention.describe(),
         )
         return removed
 

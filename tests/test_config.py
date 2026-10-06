@@ -10,6 +10,7 @@ import pytest
 
 from arango_connector.config import ConfigError, CoreSettings, load_settings
 from arango_connector.registry import build_source
+from arango_connector.retention import RetentionPolicy
 from arango_connector.sources.slack.adapter import SlackSocketModeAdapter
 from arango_connector.state import InMemoryStateStore
 
@@ -30,7 +31,14 @@ class _FakeApp:
 def _isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     # Run from an empty directory so a developer's .env cannot leak in.
     monkeypatch.chdir(tmp_path)
-    for var in (*SLACK_VARS, "SOURCE", "ARANGO_HOSTS", "RETENTION_DAYS"):
+    for var in (
+        *SLACK_VARS,
+        "SOURCE",
+        "ARANGO_HOSTS",
+        "RETENTION_DAYS",
+        "RETENTION_MODE",
+        "RETENTION_AGE_FIELD",
+    ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("ARANGO_PASSWORD", "pw")
 
@@ -79,3 +87,22 @@ def test_unknown_source_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SOURCE", "carrier-pigeon")
     with pytest.raises(ValueError, match="Unknown SOURCE='carrier-pigeon'"):
         build_source(load_settings(CoreSettings), InMemoryStateStore())
+
+
+def test_retention_defaults_to_expiry_mode() -> None:
+    assert load_settings(CoreSettings).retention_policy() == RetentionPolicy(30, "expiry")
+
+
+def test_retention_age_mode_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RETENTION_DAYS", "7")
+    monkeypatch.setenv("RETENTION_MODE", "age")
+    monkeypatch.setenv("RETENTION_AGE_FIELD", "ingested_at")
+    assert load_settings(CoreSettings).retention_policy() == RetentionPolicy(
+        7, "age", "ingested_at"
+    )
+
+
+def test_invalid_retention_mode_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RETENTION_MODE", "forever")
+    with pytest.raises(ConfigError, match="RETENTION_MODE"):
+        load_settings(CoreSettings)

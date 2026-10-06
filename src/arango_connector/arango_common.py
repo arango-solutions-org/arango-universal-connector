@@ -56,13 +56,24 @@ def retrying(attempts: int, wait_initial: float, wait_max: float) -> Retrying:
 
 
 def connect(
-    hosts: str | list[str], username: str, password: str, db_name: str
+    hosts: str | list[str],
+    username: str,
+    password: str,
+    db_name: str,
+    *,
+    create: bool = True,
 ) -> tuple[ArangoClient, StandardDatabase]:
-    """Open a client and the named database, creating the database if missing."""
+    """Open a client and the named database, creating the database if missing.
+
+    With ``create=False`` a missing database raises ``LookupError`` instead.
+    """
     client = ArangoClient(hosts=hosts)
     sys_db = client.db("_system", username=username, password=password)
 
     if not sys_db.has_database(db_name):
+        if not create:
+            client.close()
+            raise LookupError(f"database {db_name!r} does not exist")
         try:
             sys_db.create_database(db_name)
             logger.info("arango_database_created db=%s", db_name)

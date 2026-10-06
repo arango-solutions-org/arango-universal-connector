@@ -17,6 +17,7 @@ from arango_connector.arango_common import (
     retrying,
 )
 from arango_connector.envelope import Envelope
+from arango_connector.retention import RetentionPolicy
 from arango_connector.sinks.base import Sink
 
 logger = logging.getLogger(__name__)
@@ -30,25 +31,8 @@ INDEXES: tuple[tuple[str, ...], ...] = (
     ("kind",),
 )
 
-# Retention is enforced by a TTL index on ``expires_at``, which the pipeline stamps as
-# (created_at or ingested_at) + RETENTION_DAYS. expireAfter=0 means "delete once the
-# stored date has passed", so envelopes without a created_at still expire.
-TTL_FIELD = "expires_at"
-TTL_EXPIRE_AFTER = 0
-
-# Re-derives expires_at for documents whose value does not match the current window:
-# documents written before expires_at existed (schema v3), and every document after
-# RETENTION_DAYS changes. Compared at millisecond precision, which is all AQL keeps.
-_RECONCILE_EXPIRY_AQL = """
-FOR d IN @@collection
-    LET base = d.created_at != null ? d.created_at : d.ingested_at
-    FILTER base != null
-    LET expected = DATE_ADD(base, @days, "day")
-    FILTER d.expires_at == null OR DATE_TIMESTAMP(d.expires_at) != DATE_TIMESTAMP(expected)
-    UPDATE d WITH { expires_at: DATE_ISO8601(expected) } IN @@collection
-    COLLECT WITH COUNT INTO updated
-    RETURN updated
-"""
+# Retention is enforced by one TTL index whose field and window come from the
+# RetentionPolicy (see retention.py for the two modes).
 
 
 def ttl_expiry_seconds(index: dict[str, Any]) -> int | None:
@@ -83,7 +67,7 @@ class ArangoSink(Sink):
         db_name: str,
         collection_name: str,
         *,
-        retention_days: int = 0,
+        retention: RetentionPolicy | None = None,
         retry_attempts: int = 3,
         retry_wait_initial: float = 0.5,
         retry_wait_max: float = 5.0,
@@ -91,7 +75,7 @@ class ArangoSink(Sink):
         self.hosts = hosts
         self.db_name = db_name
         self.collection_name = collection_name
-        self.retention_days = retention_days
+        self.retention = retention or RetentionPolicy()
         self._username = username
         self._password = password
         self._retry_attempts = retry_attempts
@@ -106,8 +90,8 @@ class ArangoSink(Sink):
     def setup(self) -> None:
         """Create the database, collection and indexes if missing. Idempotent.
 
-        Also reconciles retention (the TTL index and stored ``expires_at`` values),
-        which can delete existing documents.
+        Also reconciles the retention TTL index, which can delete existing documents.
+        Stored documents are never rewritten here; see ``maintenance.reconcile_expiry``.
         """
         self._client, self._db = connect(self.hosts, self._username, self._password, self.db_name)
         ensure_collection(self._db, self.collection_name)
@@ -122,25 +106,24 @@ class ArangoSink(Sink):
                 )
 
         self._reconcile_ttl_index(collection)
-        self._reconcile_expiry()
 
         self._collection = collection
         logger.info(
-            "arango_sink_ready hosts=%s db=%s collection=%s retention_days=%s",
+            "arango_sink_ready hosts=%s db=%s collection=%s retention=%s",
             self.hosts,
             self.db_name,
             self.collection_name,
-            self.retention_days,
+            self.retention.describe(),
         )
 
     def _reconcile_ttl_index(self, collection: StandardCollection) -> None:
-        """Make the collection's TTL index match ``retention_days``.
+        """Make the collection's TTL index match the retention policy.
 
         ArangoDB allows at most one TTL index per collection, so an index on another
-        field or with another ``expireAfter`` (such as the pre-v4 index on
-        ``created_at``) is dropped before the desired one is added.
+        field or with another ``expireAfter`` (a different mode, window, or the pre-v4
+        index on ``created_at``) is dropped before the desired one is added.
         """
-        wanted = self.retention_days > 0
+        desired = self.retention.ttl_index()
         indexes = collection.indexes()
         # Not a list only for async/batch execution, which this sink never uses.
         if not isinstance(indexes, list):
@@ -148,10 +131,10 @@ class ArangoSink(Sink):
         existing = [idx for idx in indexes if idx["type"] == "ttl"]
 
         if (
-            wanted
+            desired is not None
             and len(existing) == 1
-            and existing[0]["fields"] == [TTL_FIELD]
-            and ttl_expiry_seconds(existing[0]) == TTL_EXPIRE_AFTER
+            and existing[0]["fields"] == [desired[0]]
+            and ttl_expiry_seconds(existing[0]) == desired[1]
         ):
             return
 
@@ -163,41 +146,26 @@ class ArangoSink(Sink):
                 idx["fields"],
             )
 
-        if not wanted:
+        if desired is None:
             return
 
-        collection.add_index(
-            {"type": "ttl", "fields": [TTL_FIELD], "expireAfter": TTL_EXPIRE_AFTER}
-        )
+        field, expire_after = desired
+        collection.add_index({"type": "ttl", "fields": [field], "expireAfter": expire_after})
         logger.warning(
-            "arango_ttl_index_created collection=%s field=%s retention_days=%s "
-            "documents older than this are removed",
+            "arango_ttl_index_created collection=%s field=%s retention=%s "
+            "documents past their retention are removed",
             self.collection_name,
-            TTL_FIELD,
-            self.retention_days,
+            field,
+            self.retention.describe(),
         )
-
-    def _reconcile_expiry(self) -> None:
-        """Bring stored ``expires_at`` values in line with the current window.
-
-        ``expires_at`` is fixed when a document is written, so without this a changed
-        RETENTION_DAYS would only apply to new documents, and documents written before
-        ``expires_at`` existed would never expire.
-        """
-        if self.retention_days <= 0 or self._db is None:
-            return
-        bind_vars: dict[str, Any] = {
-            "@collection": self.collection_name,
-            "days": self.retention_days,
-        }
-        cursor = self._db.aql.execute(_RECONCILE_EXPIRY_AQL, bind_vars=bind_vars)
-        updated = next(iter(cursor), 0)  # type: ignore[arg-type]
-        if updated:
+        if self.retention.mode == "expiry":
+            # Deadlines are fixed at write time, so documents written under another
+            # window, another mode or before schema v4 keep theirs (or have none).
             logger.warning(
-                "arango_expiry_reconciled collection=%s updated=%s retention_days=%s",
+                "arango_existing_expiry_unchanged collection=%s existing documents keep "
+                "their stored expires_at; run arango-connector-reconcile-expiry to apply "
+                "this window to them",
                 self.collection_name,
-                updated,
-                self.retention_days,
             )
 
     def close(self) -> None:

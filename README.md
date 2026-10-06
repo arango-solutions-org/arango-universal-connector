@@ -100,7 +100,9 @@ All settings come from environment variables or `.env`.
 | `ARANGO_DB`         | no       | `connector`             |                                          |
 | `ARANGO_COLLECTION` | no       | `messages`              |                                          |
 | `STATE_COLLECTION`  | no       | `connector_state`       | Source sync cursors; never expired       |
-| `RETENTION_DAYS`    | no       | `30`                    | Delete messages this many days after they were posted, in ArangoDB and the dead-letter file; `0` disables |
+| `RETENTION_DAYS`    | no       | `30`                    | Delete envelopes this many days after they were posted, in ArangoDB and the dead-letter file; `0` disables |
+| `RETENTION_MODE`    | no       | `expiry`                | `expiry` (per-document deadline) or `age`. See [Retention](#retention) |
+| `RETENTION_AGE_FIELD` | no     | `created_at`            | `age` mode only: `created_at` or `ingested_at` |
 | `DEAD_LETTER_PATH`  | no       | `./dead_letter.jsonl`   | `/data/dead_letter.jsonl` in Docker      |
 | `LOG_LEVEL`         | no       | `INFO`                  |                                          |
 
@@ -116,38 +118,69 @@ missing. Tokens and passwords are held as `SecretStr` and are never logged.
 
 ## Retention
 
-Envelopes are deleted `RETENTION_DAYS` days after they were **posted** (not after they
-were ingested). The default is 30 days. Set `RETENTION_DAYS=0` to keep them forever.
+Envelopes are deleted `RETENTION_DAYS` days after they were **posted**, 30 by default.
+Set `RETENTION_DAYS=0` to keep them forever. Deletion is enforced by an ArangoDB TTL
+index, and the same rule is applied to the dead-letter file.
 
-The pipeline stamps every envelope with `expires_at` = `created_at` + `RETENTION_DAYS`
-before writing it, falling back to `ingested_at` for envelopes whose source has no
-creation time. An ArangoDB TTL index on `expires_at` (with `expireAfter: 0`) deletes
-each document once that time has passed.
+There are two modes, chosen with `RETENTION_MODE`. They mirror MongoDB's two kinds of
+TTL index.
 
-> **Warning:** retention is on by default. If you are upgrading an existing deployment,
-> the first start after this change deletes everything already older than
-> `RETENTION_DAYS`, in both the collection and the dead-letter file. This is not
-> reversible. Set `RETENTION_DAYS=0` before starting if you want to keep that data.
+| | `expiry` (default) | `age` |
+|---|---|---|
+| What each document stores | its own deadline, `expires_at` | nothing extra |
+| TTL index | `expires_at`, `expireAfter: 0` | `RETENTION_AGE_FIELD`, `expireAfter: RETENTION_DAYS` |
+| Counted from | `created_at`, else `ingested_at` | `RETENTION_AGE_FIELD` (`created_at` or `ingested_at`) |
+| Changing `RETENTION_DAYS` | applies to **new** documents; run `reconcile-expiry` for existing ones | applies to every document immediately |
+| Documents without the date | still expire (fall back to `ingested_at`) | never expire |
+| Per-document deadlines (per-source windows, legal holds) | possible | not possible |
+
+**`expiry`** fixes each document's deadline when it is written, like MongoDB's
+`expireAt` pattern, DynamoDB TTL or Cassandra's per-write TTLs. The connector never
+rewrites stored documents on its own, so restarts cost nothing however large the
+collection is. To apply a new window to documents already stored, run the
+[maintenance command](#applying-a-new-window-to-stored-documents).
+
+**`age`** keeps the window in the index, so a change applies everywhere at once, at the
+cost of one global window per collection.
 
 Startup logs `arango_ttl_index_created` at WARNING whenever it creates or changes the
-index, so a surprising retention window is visible in the logs.
+index. In `expiry` mode it also logs `arango_existing_expiry_unchanged`, as a reminder
+that stored documents keep their old deadlines. Switching mode is safe: ArangoDB allows
+only one TTL index per collection, so the connector drops the old one first.
 
-Deletion is swept by a background thread rather than happening at the exact moment a
-message ages out, so treat the window as "removed within `RETENTION_DAYS` days".
+ArangoDB sweeps expired documents in the background rather than at the exact moment
+they expire, so treat the window as "removed within `RETENTION_DAYS` days".
 
-Changing `RETENTION_DAYS` is safe. Because `expires_at` is fixed when a document is
-written, the sink re-derives it on startup for every document whose value does not
-match the current window, and logs `arango_expiry_reconciled` at WARNING with the count.
-The same pass gives documents written before `expires_at` existed (schema version 3)
-an expiry, and the old TTL index on `created_at` is dropped automatically (ArangoDB
-allows only one TTL index per collection). Note that if retention was disabled when a
-document was written, it also gets its `expires_at` from this pass once retention is
-turned on.
+### Applying a new window to stored documents
 
-The same window applies to the dead-letter file, which the TTL index cannot reach.
-The connector prunes it once at startup and hourly thereafter, dropping entries whose
-`created_at` (else `ingested_at`) is past the window. Pruning rewrites the file through a temporary file, so
-an interrupted prune cannot truncate it, and a line too corrupt to parse is kept rather
+```bash
+uv run arango-connector-reconcile-expiry --dry-run      # count what would change
+uv run arango-connector-reconcile-expiry                # apply RETENTION_DAYS to all
+uv run arango-connector-reconcile-expiry --only-missing # only documents with no expires_at
+```
+
+It reads the same `ARANGO_*` and `RETENTION_*` settings as the connector, and only runs
+in `expiry` mode. It walks the collection in primary-key order in batches
+(`--batch-size`, default 5000). Each batch is a bounded index range read that fetches
+only the date fields and rewrites only the documents whose `expires_at` differs, so
+memory and transaction size stay flat on large collections. Running it twice is safe;
+the second run finds nothing to do. In Docker:
+`docker compose run --rm connector arango-connector-reconcile-expiry`.
+
+> **Upgrading from schema version 3:** documents written before this version have no
+> `expires_at`, so in `expiry` mode they are **never deleted** until you run
+> `arango-connector-reconcile-expiry --only-missing` once. That run gives them a
+> deadline based on when they were posted, and ArangoDB then deletes any that are
+> already past it. This is not reversible.
+
+### Dead-letter file
+
+The TTL index cannot reach the dead-letter file, so the connector prunes it once at
+startup and hourly thereafter using the same policy. In `expiry` mode it uses each
+line's `expires_at`; lines written before `expires_at` existed fall back to `created_at`
+(else `ingested_at`) plus the current window. In `age` mode it uses
+`RETENTION_AGE_FIELD`. Pruning rewrites the file through a temporary file, so an
+interrupted prune cannot truncate it, and a line too corrupt to parse is kept rather
 than discarded (with a `dead_letter_prune_unreadable` warning) so a bad write surfaces
 instead of vanishing.
 
@@ -198,7 +231,8 @@ Top-level fields:
 
 - `updated_at` is when the content last changed in the source (for Slack, the most
   recent edit), or `null`.
-- `expires_at` is when retention deletes the document; `null` when retention is off.
+- `expires_at` is when retention deletes the document. It is `null` when retention is
+  off or `RETENTION_MODE=age`.
 
 Slack `message` payloads:
 
@@ -273,7 +307,9 @@ src/arango_connector/
 ├── config.py          # CoreSettings, shared settings base and load_settings()
 ├── envelope.py          # source-agnostic Envelope, Scope, make_key()
 ├── payloads.py        # typed payloads per entity kind (MessagePayload, ...)
-├── pipeline.py        # source → sink, expires_at stamping, dead-lettering
+├── pipeline.py        # source → sink, retention stamping, dead-lettering
+├── retention.py       # RetentionPolicy: expiry / age modes
+├── maintenance.py     # arango-connector-reconcile-expiry (operator command)
 ├── registry.py        # name → factory maps (future plugin point)
 ├── arango_common.py   # connection, retry policy shared by sink and state store
 ├── state/
