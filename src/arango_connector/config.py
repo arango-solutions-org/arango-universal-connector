@@ -37,25 +37,51 @@ class ConnectorSettings(BaseSettings):
 class CoreSettings(ConnectorSettings):
     """Settings shared by every deployment, whatever the source."""
 
-    source: str = "slack"
-    sink: str = "arango"
+    source: str = Field(
+        default="slack", description="Source adapter to run (one source per process)."
+    )
+    sink: str = Field(default="arango", description="Sink to write to.")
 
-    arango_hosts: Annotated[list[str], NoDecode] = ["http://localhost:8529"]
-    arango_username: str = "root"
-    arango_password: SecretStr
-    arango_db: str = "connector"
-    arango_collection: str = "messages"
-    # Holds source cursors (e.g. Gmail historyId). Never subject to retention.
-    state_collection: str = "connector_state"
-    # Days to keep envelopes. 0 disables retention. See retention.py for the two modes.
-    retention_days: int = Field(default=30, ge=0)
-    # "expiry": each document stores its own expires_at (window fixed at write time).
-    # "age": documents expire retention_days after retention_age_field.
-    retention_mode: RetentionMode = "expiry"
-    retention_age_field: AgeField = "created_at"
+    arango_hosts: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["http://localhost:8529"],
+        description="ArangoDB endpoint(s), comma-separated for multiple coordinators.",
+    )
+    arango_username: str = Field(default="root", description="ArangoDB user.")
+    arango_password: SecretStr = Field(
+        description="ArangoDB password. Also the root password of the Compose ArangoDB."
+    )
+    arango_db: str = Field(
+        default="connector", description="Database, created on first start if missing."
+    )
+    arango_collection: str = Field(
+        default="messages", description="Collection envelopes are written to."
+    )
+    state_collection: str = Field(
+        default="connector_state",
+        description="Collection holding source sync cursors (e.g. Gmail historyId). "
+        "Never subject to retention.",
+    )
+    retention_days: int = Field(
+        default=30,
+        ge=0,
+        description="Delete envelopes this many days after they were posted, in ArangoDB "
+        "and the dead-letter file. `0` disables retention.",
+    )
+    retention_mode: RetentionMode = Field(
+        default="expiry",
+        description="`expiry`: each document stores its own `expires_at`, fixed at write "
+        "time. `age`: documents expire `RETENTION_DAYS` after `RETENTION_AGE_FIELD`.",
+    )
+    retention_age_field: AgeField = Field(
+        default="created_at", description="`age` mode only: the date retention counts from."
+    )
 
-    dead_letter_path: Path = Path("./dead_letter.jsonl")
-    log_level: str = "INFO"
+    dead_letter_path: Path = Field(
+        default=Path("./dead_letter.jsonl"),
+        description="JSONL file for envelopes that still fail after retries "
+        "(`/data/dead_letter.jsonl` in Docker).",
+    )
+    log_level: str = Field(default="INFO", description="Python log level.")
 
     @field_validator("arango_hosts", mode="before")
     @classmethod

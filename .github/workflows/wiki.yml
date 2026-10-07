@@ -1,0 +1,59 @@
+name: Publish wiki
+
+# docs/ and README.md are the source of truth; the wiki is a generated copy.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "README.md"
+      - "docs/**"
+      - "src/arango_connector/**"
+      - ".github/workflows/wiki.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write # pushing to the wiki repo
+
+concurrency:
+  group: wiki
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+
+      - name: Check docs are current
+        run: uv run python -m arango_connector.doctools check
+
+      - name: Render wiki pages
+        run: >-
+          uv run python -m arango_connector.doctools wiki build/wiki
+          --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" --sha "$GITHUB_SHA"
+
+      - name: Push to the wiki
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git" wiki; then
+            echo "::warning::Wiki repo not found. Enable the wiki and save its first page once (Settings > Features > Wikis), then re-run this workflow."
+            exit 0
+          fi
+          # Replace every page, so pages removed from docs/ disappear from the wiki too.
+          find wiki -maxdepth 1 -name '*.md' -delete
+          cp build/wiki/*.md wiki/
+          cd wiki
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Wiki already up to date."
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -m "Publish docs from ${GITHUB_SHA::7}"
+          git push

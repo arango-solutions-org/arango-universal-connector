@@ -20,10 +20,12 @@ Gmail (history API) ──► GmailPollingAdapter ────► normalize() �
 Each source has a page with setup, configuration, how sync works, its document shape,
 privacy notes and troubleshooting.
 
-| Source | `SOURCE=` | Kind | Delivery | Setup and reference |
-|---|---|---|---|---|
-| Slack | `slack` | `message` | push (Socket Mode) | [docs/sources/slack.md](docs/sources/slack.md) |
-| Gmail | `gmail` | `email`, `attachment` | poll (Gmail history API) | [docs/sources/gmail.md](docs/sources/gmail.md) |
+<!-- BEGIN GENERATED: catalogue -->
+| Source | `SOURCE=` | Kinds | Delivery | What it ingests | Docs |
+|---|---|---|---|---|---|
+| Slack | `slack` | `message` | push (Socket Mode) | Messages, thread replies and edits from allowlisted channels, in real time. | [Slack docs](docs/sources/slack.md) |
+| Gmail | `gmail` | `email`, `attachment` | poll (Gmail history API) | Email from selected mailboxes and labels, incrementally, with optional attachments and text extraction. | [Gmail docs](docs/sources/gmail.md) |
+<!-- END GENERATED: catalogue -->
 
 ## What it does
 
@@ -70,26 +72,31 @@ To run the connector outside Docker: `docker compose up -d arangodb`, then
 
 All settings come from environment variables or `.env`.
 
-| Variable            | Required | Default                 | Notes                                    |
-|---------------------|----------|-------------------------|------------------------------------------|
-| `SOURCE`            | no       | `slack`                 | Source adapter name (see `registry.py`)  |
-| `SINK`              | no       | `arango`                | Sink name (see `registry.py`)            |
-| `SLACK_*`           | slack    |                         | See [Slack configuration](docs/sources/slack.md#configuration) |
-| `GMAIL_*`           | gmail    |                         | See [Gmail configuration](docs/sources/gmail.md#configuration) |
-| `ARANGO_HOSTS`      | no       | `http://localhost:8529` | Comma-separated for multiple coordinators |
-| `ARANGO_USERNAME`   | no       | `root`                  |                                          |
-| `ARANGO_PASSWORD`   | yes      | —                       | Also the ArangoDB root password in Compose |
-| `ARANGO_DB`         | no       | `connector`             |                                          |
-| `ARANGO_COLLECTION` | no       | `messages`              |                                          |
-| `STATE_COLLECTION`  | no       | `connector_state`       | Source sync cursors; never expired       |
-| `RETENTION_DAYS`    | no       | `30`                    | Delete envelopes this many days after they were posted, in ArangoDB and the dead-letter file; `0` disables |
-| `RETENTION_MODE`    | no       | `expiry`                | `expiry` (per-document deadline) or `age`. See [Retention](#retention) |
-| `RETENTION_AGE_FIELD` | no     | `created_at`            | `age` mode only: `created_at` or `ingested_at` |
-| `DEAD_LETTER_PATH`  | no       | `./dead_letter.jsonl`   | `/data/dead_letter.jsonl` in Docker      |
-| `LOG_LEVEL`         | no       | `INFO`                  |                                          |
+<!-- BEGIN GENERATED: config:core -->
+| Variable | Default | Values | Description |
+|---|---|---|---|
+| `SOURCE` | `slack` | text | Source adapter to run (one source per process). |
+| `SINK` | `arango` | text | Sink to write to. |
+| `ARANGO_HOSTS` | `http://localhost:8529` | comma-separated | ArangoDB endpoint(s), comma-separated for multiple coordinators. |
+| `ARANGO_USERNAME` | `root` | text | ArangoDB user. |
+| `ARANGO_PASSWORD` | **required** | secret | ArangoDB password. Also the root password of the Compose ArangoDB. |
+| `ARANGO_DB` | `connector` | text | Database, created on first start if missing. |
+| `ARANGO_COLLECTION` | `messages` | text | Collection envelopes are written to. |
+| `STATE_COLLECTION` | `connector_state` | text | Collection holding source sync cursors (e.g. Gmail historyId). Never subject to retention. |
+| `RETENTION_DAYS` | `30` | integer ≥ 0 | Delete envelopes this many days after they were posted, in ArangoDB and the dead-letter file. `0` disables retention. |
+| `RETENTION_MODE` | `expiry` | `expiry` \| `age` | `expiry`: each document stores its own `expires_at`, fixed at write time. `age`: documents expire `RETENTION_DAYS` after `RETENTION_AGE_FIELD`. |
+| `RETENTION_AGE_FIELD` | `created_at` | `created_at` \| `ingested_at` | `age` mode only: the date retention counts from. |
+| `DEAD_LETTER_PATH` | `./dead_letter.jsonl` | path | JSONL file for envelopes that still fail after retries (`/data/dead_letter.jsonl` in Docker). |
+| `LOG_LEVEL` | `INFO` | text | Python log level. |
+<!-- END GENERATED: config:core -->
 
-Variables marked *slack* or *gmail* are required only when `SOURCE` selects that
-source: each source loads its own settings class, so a deployment only needs the variables of the source it runs.
+<!-- BEGIN GENERATED: source-settings -->
+- `SLACK_*`: required only when `SOURCE=slack`. See [Slack configuration](docs/sources/slack.md#configuration).
+- `GMAIL_*`: required only when `SOURCE=gmail`. See [Gmail configuration](docs/sources/gmail.md#configuration).
+<!-- END GENERATED: source-settings -->
+
+Each source loads its own settings class, so a deployment only needs the variables of
+the source it runs.
 The connector exits immediately with a clear message if a required variable is
 missing. Tokens and passwords are held as `SecretStr` and are never logged.
 
@@ -245,7 +252,13 @@ make install            # uv sync
 make check              # lint, format check, mypy, unit tests (no ArangoDB needed)
 make test-integration   # starts a disposable ArangoDB on :18529, then runs integration tests
 make test-db-down       # remove that database when you're done
+make docs-gen           # regenerate config tables / source catalogue after changing settings
 ```
+
+CI (`.github/workflows/ci.yml`) runs `make check` and the integration tests (against an
+ArangoDB service container) on every PR and push to `main`. Docs are published to the
+[wiki](https://github.com/arango-solutions/arango-universal-connector/wiki) on merge; see
+[how the docs are built](docs/README.md#how-these-docs-are-built).
 
 Container targets work with Docker or Podman (auto-detected; override with
 `CONTAINER=podman`). `make up` / `down` / `logs` need a Compose provider (Docker
@@ -320,10 +333,12 @@ src/arango_connector/
    values under your source's name), so a restart resumes where it left off.
 5. **Register a factory** in `registry.py` that loads your settings with
    `load_settings(YourSettings)`, and select it with `SOURCE=`.
-6. **Document it.** Copy [`docs/sources/_template.md`](docs/sources/_template.md) to
-   `docs/sources/<name>.md`, fill in every section (setup, configuration, sync,
-   document shape, privacy, troubleshooting), and add it to the [Sources](#sources)
-   table and to [`docs/README.md`](docs/README.md).
+6. **Document it.** Give every setting a `description`, and add the source to
+   `SOURCE_INFO` in `registry.py`. Copy [`docs/sources/_template.md`](docs/sources/_template.md)
+   to `docs/sources/<name>.md`, fill in every section (setup, sync, document shape,
+   privacy, troubleshooting), add your variables to `.env.example`, and run
+   `make docs-gen`. That fills in the configuration table and adds the source to the
+   catalogues. See [how the docs are built](docs/README.md#how-these-docs-are-built).
 
 A sink implements `Sink` (`setup`, `write(list[Envelope])`, `close`) and is registered
 in `SINKS`.

@@ -27,12 +27,15 @@ several, and say which to choose when.
 
 ## Configuration
 
-| Variable | Default | Notes |
-|---|---|---|
-| `<NAME>_...` | required | |
+<!-- Generated: give every field of your settings class a description, add the source to
+SOURCE_INFO in registry.py, then put this region here and run `make docs-gen`:
 
-Say which variables are required, and note any combinations that are validated at
-startup.
+BEGIN GENERATED: config:<name>
+END GENERATED: config:<name>
+
+(as HTML comments, exactly like the other source pages). -->
+
+Below the table, note any combinations that are validated at startup.
 
 ## Running
 
