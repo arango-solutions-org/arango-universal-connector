@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -111,15 +112,27 @@ def test_refuses_outside_expiry_mode(db: StandardDatabase, policy: RetentionPoli
         reconcile_expiry(db, "messages", policy)
 
 
+def _cli_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, conn: ArangoConn) -> None:
+    """Point the CLI at the test database, isolated from any developer .env or shell env."""
+    monkeypatch.chdir(tmp_path)  # the CLI reads .env from the working directory
+    for var in ("RETENTION_MODE", "RETENTION_AGE_FIELD", "LOG_LEVEL"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("ARANGO_HOSTS", conn.hosts)
+    monkeypatch.setenv("ARANGO_USERNAME", conn.username)
+    monkeypatch.setenv("ARANGO_PASSWORD", conn.password)
+    monkeypatch.setenv("ARANGO_DB", conn.db_name)
+    monkeypatch.setenv("ARANGO_COLLECTION", "messages")
+    monkeypatch.setenv("RETENTION_DAYS", "7")
+
+
 def test_cli_end_to_end(
-    db: StandardDatabase, arango_conn: ArangoConn, monkeypatch: pytest.MonkeyPatch
+    db: StandardDatabase,
+    arango_conn: ArangoConn,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     _seed(db, _docs())
-    monkeypatch.setenv("ARANGO_HOSTS", arango_conn.hosts)
-    monkeypatch.setenv("ARANGO_USERNAME", arango_conn.username)
-    monkeypatch.setenv("ARANGO_PASSWORD", arango_conn.password)
-    monkeypatch.setenv("ARANGO_DB", arango_conn.db_name)
-    monkeypatch.setenv("RETENTION_DAYS", "7")
+    _cli_env(monkeypatch, tmp_path, arango_conn)
 
     assert main(["--batch-size", "3"]) == 0
     assert _expires(db, "v3") == _ms(POSTED) + timedelta(days=7)
@@ -134,12 +147,12 @@ def test_missing_collection_is_a_clear_error(db: StandardDatabase) -> None:
 
 
 def test_cli_never_creates_a_database(
-    arango_conn: ArangoConn, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    arango_conn: ArangoConn,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("ARANGO_HOSTS", arango_conn.hosts)
-    monkeypatch.setenv("ARANGO_USERNAME", arango_conn.username)
-    monkeypatch.setenv("ARANGO_PASSWORD", arango_conn.password)
-    monkeypatch.setenv("ARANGO_DB", arango_conn.db_name)  # not created by this test
+    _cli_env(monkeypatch, tmp_path, arango_conn)  # ARANGO_DB is not created by this test
 
     assert main([]) == 2
     assert "does not exist" in capsys.readouterr().err

@@ -16,7 +16,14 @@ logger = logging.getLogger("arango_connector")
 LOG_FORMAT = "ts=%(asctime)s level=%(levelname)s logger=%(name)s %(message)s"
 
 # Third-party loggers that can be noisy (or verbose about requests) at DEBUG.
-_QUIET_LOGGERS = ("slack_bolt", "slack_sdk", "urllib3", "arango")
+_QUIET_LOGGERS = (
+    "slack_bolt",
+    "slack_sdk",
+    "urllib3",
+    "arango",
+    "googleapiclient",
+    "google",
+)
 
 
 class _ThirdPartyDebugFilter(logging.Filter):

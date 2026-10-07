@@ -39,6 +39,44 @@ def build_slack_adapter(settings: CoreSettings, state: StateStore) -> SourceAdap
     )
 
 
+def build_gmail_adapter(settings: CoreSettings, state: StateStore) -> SourceAdapter:
+    """Build the Gmail polling adapter. Its cursors live in ``state``."""
+    from arango_connector.sources.gmail.adapter import GmailPollingAdapter
+    from arango_connector.sources.gmail.auth import build_credentials
+    from arango_connector.sources.gmail.client import GmailClient, GoogleGmailClient
+    from arango_connector.sources.gmail.config import GmailSettings
+    from arango_connector.sources.gmail.normalize import NormalizeOptions
+
+    gmail = load_settings(GmailSettings)
+
+    def client_factory(mailbox: str) -> GmailClient:
+        return GoogleGmailClient(
+            build_credentials(
+                gmail.gmail_auth_mode,
+                mailbox,
+                service_account_file=gmail.gmail_service_account_file,
+                token_dir=gmail.gmail_oauth_token_dir,
+            )
+        )
+
+    return GmailPollingAdapter(
+        gmail.gmail_mailboxes,
+        client_factory,
+        state,
+        include_labels=gmail.gmail_labels,
+        exclude_labels=gmail.gmail_exclude_labels,
+        options=NormalizeOptions(
+            key_mode=gmail.gmail_key_mode,
+            store_body=gmail.gmail_store_body,
+            store_bcc=gmail.gmail_store_bcc,
+            raw_mode=gmail.gmail_raw_mode,
+        ),
+        initial_sync=gmail.gmail_initial_sync,
+        initial_lookback=gmail.gmail_initial_lookback,
+        interval_seconds=gmail.gmail_poll_interval_seconds,
+    )
+
+
 def build_arango_sink(settings: CoreSettings) -> Sink:
     """Build the ArangoDB sink from settings."""
     from arango_connector.sinks.arango import ArangoSink
@@ -66,9 +104,10 @@ def build_state_store(settings: CoreSettings) -> StateStore:
     )
 
 
-# TODO(future): register additional sources here, e.g. "gmail", "teams".
+# TODO(future): register additional sources here, e.g. "teams", "sharepoint".
 SOURCES: dict[str, SourceFactory] = {
     "slack": build_slack_adapter,
+    "gmail": build_gmail_adapter,
 }
 
 SINKS: dict[str, SinkFactory] = {

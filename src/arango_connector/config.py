@@ -87,7 +87,10 @@ def load_settings[S: BaseSettings](cls: type[S], **overrides: Any) -> S:
     except ValidationError as exc:
         problems = []
         for err in exc.errors():
-            var = str(err["loc"][0]).upper() if err["loc"] else "?"
             reason = "is required but not set" if err["type"] == "missing" else err["msg"]
-            problems.append(f"  - {var}: {reason}")
+            reason = reason.removeprefix("Value error, ")
+            if err["loc"]:
+                problems.append(f"  - {str(err['loc'][0]).upper()}: {reason}")
+            else:  # a check spanning several variables names them itself
+                problems.append(f"  - {reason}")
         raise ConfigError("Invalid configuration:\n" + "\n".join(problems)) from None

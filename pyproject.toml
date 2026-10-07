@@ -1,7 +1,7 @@
 [project]
 name = "arango-connector"
 version = "0.1.0"
-description = "Universal connector feeding messages from sources (Slack, ...) into ArangoDB."
+description = "Universal connector feeding sources (Slack, Gmail, ...) into ArangoDB."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
@@ -10,11 +10,15 @@ dependencies = [
     "pydantic>=2.6",
     "pydantic-settings>=2.2",
     "tenacity>=8.2",
+    "google-api-python-client>=2.201.0",
+    "google-auth>=2.60.0",
+    "google-auth-oauthlib>=1.5.0",
 ]
 
 [project.scripts]
 arango-connector = "arango_connector.main:main"
 arango-connector-reconcile-expiry = "arango_connector.maintenance:main"
+arango-connector-gmail-auth = "arango_connector.sources.gmail.auth:auth_main"
 
 [dependency-groups]
 dev = [

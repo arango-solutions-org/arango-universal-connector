@@ -1,87 +1,70 @@
 # Arango Connector
 
-A Python service that listens to Slack channels in real time (Socket Mode) and stores
-every new message in ArangoDB as a JSON document.
+A Python service that streams messages from Slack channels (in real time, over Socket
+Mode) and emails from Gmail mailboxes (polled incrementally) into ArangoDB as JSON
+documents.
 
-This is the MVP of a **universal connector**: sources (Slack today; Gmail, Teams,
+This is the MVP of a **universal connector**: sources (Slack and Gmail today; Teams,
 SharePoint, … later) are normalized into a source-agnostic [`Envelope`](#document-shape)
-and written by a `Sink` (ArangoDB today).
+and written by a `Sink` (ArangoDB today). Each connector process runs one source.
 
 ```
-Slack (Socket Mode) ──► SlackSocketModeAdapter ──► normalize() ──► Envelope ──► Pipeline ──► ArangoSink ──► connector/messages
-                                                                                 │  (stamps expires_at)
-                                                                                 └─ on final failure ──► dead_letter.jsonl
+Slack (Socket Mode) ──► SlackSocketModeAdapter ──► normalize() ──┐
+                                                                 ├─► Envelope ──► Pipeline ──► ArangoSink ──► connector/<collection>
+Gmail (history API) ──► GmailPollingAdapter ────► normalize() ──┘                  │  (stamps expires_at)
+        ▲ cursor per mailbox in connector_state                                     └─ on final failure ──► dead_letter.jsonl
 ```
+
+## Sources
+
+Each source has a page with setup, configuration, how sync works, its document shape,
+privacy notes and troubleshooting.
+
+| Source | `SOURCE=` | Kind | Delivery | Setup and reference |
+|---|---|---|---|---|
+| Slack | `slack` | `message` | push (Socket Mode) | [docs/sources/slack.md](docs/sources/slack.md) |
+| Gmail | `gmail` | `email` | poll (Gmail history API) | [docs/sources/gmail.md](docs/sources/gmail.md) |
 
 ## What it does
 
-- Ingests new messages, including thread replies, bot messages and thread
-  broadcasts, from an allowlist of channel IDs.
-- Applies edits over the stored message, so an edited message is not left showing
-  its original text. See [Edits](#edits).
-- Skips deletes, joins and other subtypes (these are planned for later).
-- Writes one document per message into `connector/messages`. Documents are keyed
-  `slack_{channel_id}_{ts}`, and writes use upsert semantics, so Slack re-delivering
-  a message never creates a duplicate.
-- Deletes messages `RETENTION_DAYS` days after they were posted, 30 by default, from
-  both ArangoDB and the dead-letter file. See [Retention](#retention).
+Whatever the source, the connector:
+
+- Writes one document per item, keyed deterministically per source, with upsert
+  semantics, so a re-delivered or re-read item never creates a duplicate.
 - Creates the database, collections and indexes on startup (idempotent), including a
   `connector_state` collection where polling sources keep their sync cursors.
-- Retries failed writes (3 attempts, exponential backoff). If a write still fails,
-  the message is appended to a dead-letter JSONL file instead of being lost.
+- Deletes documents `RETENTION_DAYS` days after they were posted, 30 by default, from
+  both ArangoDB and the dead-letter file. See [Retention](#retention).
+- Retries failed writes (3 attempts, exponential backoff). If a write still fails, the
+  document is appended to a dead-letter JSONL file instead of being lost.
 
 ## Quick start
 
 You need Docker (with Compose), and [`uv`](https://docs.astral.sh/uv/) if you want to
 run it outside Docker.
 
-### 1. Create the Slack app
+1. Set up credentials for your source by following its page under
+   [Sources](#sources).
+2. Configure:
 
-1. Go to <https://api.slack.com/apps> → **Create New App** → **From a manifest**,
-   pick your workspace, and paste the contents of [`slack_manifest.yaml`](slack_manifest.yaml).
-2. **Basic Information → App-Level Tokens → Generate Token and Scopes**. Add the
-   `connections:write` scope and generate. Copy the token (`xapp-…`). This is
-   `SLACK_APP_TOKEN`.
-3. **Install App → Install to Workspace**, then copy the **Bot User OAuth Token**
-   (`xoxb-…`). This is `SLACK_BOT_TOKEN`.
-4. In Slack, invite the bot to each channel you want to capture:
-   `/invite @arango-connector`
-5. Get each channel's ID: open the channel → click the channel name → the
-   **About** tab → the ID (`C…`) is at the bottom. These go in
-   `SLACK_CHANNEL_IDS`, comma-separated.
+   ```bash
+   cp .env.example .env
+   ```
 
-### 2. Configure
+   Set `SOURCE`, `ARANGO_PASSWORD`, and the source's variables.
+3. Run the full stack:
 
-```bash
-cp .env.example .env
-```
+   ```bash
+   docker compose up --build                    # Slack (the default connector service)
+   docker compose --profile gmail up --build    # adds the Gmail connector service
+   ```
 
-Edit `.env` and set at least `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`,
-`SLACK_CHANNEL_IDS` and `ARANGO_PASSWORD`.
+4. Open the ArangoDB web UI at <http://localhost:8529> (user `root`, your
+   `ARANGO_PASSWORD`). Choose database `connector` on the login screen; it appears
+   after the connector's first start.
 
-### 3. Run the full stack
-
-```bash
-docker compose up --build
-```
-
-Post a message in a watched channel. Within a few seconds it appears in the ArangoDB
-web UI at <http://localhost:8529> (user `root`, your `ARANGO_PASSWORD`) under
-database `connector` → collection `messages`. Or query it with AQL:
-
-```aql
-FOR m IN messages SORT m.created_at DESC LIMIT 10 RETURN m
-```
-
-### Running locally without Docker for the connector
-
-```bash
-docker compose up -d arangodb
-uv sync
-uv run python -m arango_connector.main
-```
-
-Press Ctrl+C to shut down cleanly.
+To run the connector outside Docker: `docker compose up -d arangodb`, then
+`uv run python -m arango_connector.main`. Press Ctrl+C to shut down cleanly.
 
 ## Configuration
 
@@ -91,9 +74,8 @@ All settings come from environment variables or `.env`.
 |---------------------|----------|-------------------------|------------------------------------------|
 | `SOURCE`            | no       | `slack`                 | Source adapter name (see `registry.py`)  |
 | `SINK`              | no       | `arango`                | Sink name (see `registry.py`)            |
-| `SLACK_BOT_TOKEN`   | slack    | —                       | `xoxb-…`                                 |
-| `SLACK_APP_TOKEN`   | slack    | —                       | `xapp-…`, needs `connections:write`      |
-| `SLACK_CHANNEL_IDS` | slack    | —                       | Comma-separated, e.g. `C012,C034`        |
+| `SLACK_*`           | slack    |                         | See [Slack configuration](docs/sources/slack.md#configuration) |
+| `GMAIL_*`           | gmail    |                         | See [Gmail configuration](docs/sources/gmail.md#configuration) |
 | `ARANGO_HOSTS`      | no       | `http://localhost:8529` | Comma-separated for multiple coordinators |
 | `ARANGO_USERNAME`   | no       | `root`                  |                                          |
 | `ARANGO_PASSWORD`   | yes      | —                       | Also the ArangoDB root password in Compose |
@@ -106,8 +88,8 @@ All settings come from environment variables or `.env`.
 | `DEAD_LETTER_PATH`  | no       | `./dead_letter.jsonl`   | `/data/dead_letter.jsonl` in Docker      |
 | `LOG_LEVEL`         | no       | `INFO`                  |                                          |
 
-Variables marked *slack* are required only when `SOURCE=slack`: each source loads its
-own settings class, so a deployment only needs the variables of the source it runs.
+Variables marked *slack* or *gmail* are required only when `SOURCE` selects that
+source: each source loads its own settings class, so a deployment only needs the variables of the source it runs.
 The connector exits immediately with a clear message if a required variable is
 missing. Tokens and passwords are held as `SecretStr` and are never logged.
 
@@ -192,7 +174,8 @@ window elapses.
 
 Every source produces an `Envelope` (schema version 4). The top level is the same for all
 sources; `payload` is typed by the envelope's **kind**, so sources of the same kind share
-a shape (Slack, Teams and Discord all produce `message` payloads).
+a shape (Slack, Teams and Discord would all produce `message` payloads). Each source's
+page shows a full example and its payload fields.
 
 ```json
 {
@@ -206,46 +189,29 @@ a shape (Slack, Teams and Discord all produce `message` payloads).
   "updated_at": null,
   "ingested_at": "2026-09-23T19:30:00.000000Z",
   "expires_at": "2024-06-22T21:33:20.123456Z",
-  "payload": {
-    "kind": "message",
-    "author_id": "U0123ABC",
-    "author_name": "Ada Lovelace",
-    "author_type": "user",
-    "text": "Hello!",
-    "thread_id": null,
-    "parent_id": null
-  },
-  "raw": { "...": "the original Slack event, unmodified" }
+  "payload": { "kind": "message", "...": "fields for this kind" },
+  "raw": { "...": "the original source item" }
 }
 ```
 
-Top-level fields:
-
-- `source` is the connector that produced the envelope, `kind` the entity kind
-  (`message` today), and `source_id` the item's own id in its source.
+- `source` is the connector that produced the envelope, `kind` the entity kind, and
+  `source_id` the item's own id in its source.
 - `scope` says where the envelope lives, outermost first:
 
-  | source  | `tenant_id` | `container_id` | `path` |
-  |---------|-------------|----------------|--------|
-  | slack   | team        | channel        | `[]`   |
+  | source | `tenant_id` | `container_id` | `path` |
+  |---|---|---|---|
+  | [slack](docs/sources/slack.md#document-shape) | team | channel | `[]` |
+  | [gmail](docs/sources/gmail.md#document-shape) | mailbox domain | mailbox key | `[]` |
 
-- `updated_at` is when the content last changed in the source (for Slack, the most
-  recent edit), or `null`.
+- `updated_at` is when the content last changed in the source (a Slack edit, a Gmail
+  label change), or `null`.
 - `expires_at` is when retention deletes the document. It is `null` when retention is
   off or `RETENTION_MODE=age`.
 
-Slack `message` payloads:
-
-- `author_type` is `"bot"` for `bot_message` events and for app-bot posts that
-  carry a `bot_id`; `author_id` is then the `bot_id`.
-- `author_name` is the Slack user's `real_name`, looked up with `users.info` (needs
-  the `users:read` scope) and cached per user until the connector restarts, so a
-  rename is picked up only after a restart. For bots it is the bot's `username` or
-  `bot_profile.name`. It is `null` if the lookup fails; the message is still stored.
-- `thread_id` is the thread's `ts` for any message in a thread (including its root
-  once Slack reports it as one), and `null` otherwise.
-- `parent_id` is the parent's `ts` for thread replies, and `null` for top-level
-  messages and thread roots.
+| Kind | Payload model | Sources |
+|---|---|---|
+| `message` | `MessagePayload`: author, text, thread | Slack |
+| `email` | `EmailPayload`: subject, addresses, threading headers, labels, body | Gmail |
 
 Persistent indexes are created on `[scope.container_id, created_at]`,
 `[source, scope.tenant_id, scope.container_id]` and `[kind]`.
@@ -258,31 +224,33 @@ Version 4 renamed and nested fields: `channel_id` → `scope.container_id`,
 `payload`. Existing documents are not migrated; they keep the old shape until retention
 removes them, so queries that span the upgrade should filter on `schema_version`.
 
-## Edits
-
-Editing a message in Slack overwrites the stored document. The edit is keyed on the
-original message's `ts`, so it lands on the existing document rather than creating a
-new one, and `updated_at` is set.
-
-Because the whole document is replaced, content the edit removed does not survive
-anywhere — including inside `raw`, which holds only the edited message. Slack's
-`message_changed` payload also carries a `previous_message` with the pre-edit text;
-that is deliberately discarded rather than stored.
-
-Deletes are still not handled: see [Not yet supported](#not-yet-supported).
-
 ## Dead-letter file
 
 If a write still fails after retries (for example, because ArangoDB is unreachable),
 the document is appended as one JSON line to `DEAD_LETTER_PATH` and an
-`envelope_write_failed` error is logged. The listener keeps running. Because writes
+`envelope_write_failed` error is logged. The source keeps running. Because writes
 are idempotent, dead-lettered documents can be safely replayed later. There is no
 replay tool yet.
 
-This file holds full message content, so it is covered by `RETENTION_DAYS` too. See
+This file holds full item content, so it is covered by `RETENTION_DAYS` too. See
 [Retention](#retention).
 
 ## Development
+
+The Makefile wraps the common tasks; run `make` (or `make help`) to list them.
+
+```bash
+make install            # uv sync
+make check              # lint, format check, mypy, unit tests (no ArangoDB needed)
+make test-integration   # starts a disposable ArangoDB on :18529, then runs integration tests
+make test-db-down       # remove that database when you're done
+```
+
+Container targets work with Docker or Podman (auto-detected; override with
+`CONTAINER=podman`). `make up` / `down` / `logs` need a Compose provider (Docker
+Compose, or `podman compose` with one installed).
+
+Without make:
 
 ```bash
 uv sync
@@ -305,7 +273,7 @@ uv run pytest -m integration
 src/arango_connector/
 ├── main.py            # entrypoint: config → registry → pipeline, signal handling
 ├── config.py          # CoreSettings, shared settings base and load_settings()
-├── envelope.py          # source-agnostic Envelope, Scope, make_key()
+├── envelope.py        # source-agnostic Envelope, Scope, make_key()
 ├── payloads.py        # typed payloads per entity kind (MessagePayload, ...)
 ├── pipeline.py        # source → sink, retention stamping, dead-lettering
 ├── retention.py       # RetentionPolicy: expiry / age modes
@@ -319,10 +287,16 @@ src/arango_connector/
 ├── sources/
 │   ├── base.py        # SourceAdapter ABC
 │   ├── polling.py     # PollingSourceAdapter: interval loop, backoff, clean stop
-│   └── slack/
-│       ├── config.py  # SlackSettings
-│       ├── adapter.py # SlackSocketModeAdapter (Bolt, Socket Mode)
-│       └── normalize.py  # pure: Slack event → Envelope | None
+│   ├── slack/
+│   │   ├── config.py  # SlackSettings
+│   │   ├── adapter.py # SlackSocketModeAdapter (Bolt, Socket Mode)
+│   │   └── normalize.py  # pure: Slack event → Envelope | None
+│   └── gmail/
+│       ├── config.py  # GmailSettings
+│       ├── auth.py    # credentials + arango-connector-gmail-auth (OAuth helper)
+│       ├── client.py  # GmailClient protocol + googleapiclient implementation
+│       ├── adapter.py # GmailPollingAdapter (history sync, cursors, label filter)
+│       └── normalize.py  # pure: Gmail message → Envelope | None
 └── sinks/
     ├── base.py        # Sink ABC
     └── arango.py      # ArangoSink
@@ -344,6 +318,10 @@ src/arango_connector/
    values under your source's name), so a restart resumes where it left off.
 5. **Register a factory** in `registry.py` that loads your settings with
    `load_settings(YourSettings)`, and select it with `SOURCE=`.
+6. **Document it.** Copy [`docs/sources/_template.md`](docs/sources/_template.md) to
+   `docs/sources/<name>.md`, fill in every section (setup, configuration, sync,
+   document shape, privacy, troubleshooting), and add it to the [Sources](#sources)
+   table and to [`docs/README.md`](docs/README.md).
 
 A sink implements `Sink` (`setup`, `write(list[Envelope])`, `close`) and is registered
 in `SINKS`.
@@ -351,14 +329,13 @@ in `SINKS`.
 ## Not yet supported
 
 These are deliberately out of scope for the MVP. Look for `TODO(future):` comments at
-the extension points.
+the extension points, and the "Not supported yet" section of each source's page.
 
-- Deletes. A message deleted in Slack stays in ArangoDB until `RETENTION_DAYS`
+- Deletes. An item deleted in its source stays in ArangoDB until `RETENTION_DAYS`
   elapses. Handling them needs a delete operation on `Envelope` and `Sink`, which
   today only express "write this document".
-- Historical backfill (`conversations.history`), reactions and files.
 - Graph modeling (users/channels collections, edges) and ArangoSearch.
 - Queues, batching, and a dead-letter collection.
-- Other sources (Gmail is in progress), OAuth install flow, multi-workspace support,
-  and an admin UI.
-- Running more than one source per process; run one container per source for now.
+- More sources: IMAP (SE-136), webhook / HTTP ingest (SE-137), Teams, SharePoint, …
+- Running more than one source per process (SE-132); run one container per source for
+  now.

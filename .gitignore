@@ -14,6 +14,8 @@ dist/
 # Secrets / local state
 .env
 dead_letter.jsonl
+# Gmail service account keys and OAuth tokens
+secrets/
 
 # OS / editors
 .DS_Store

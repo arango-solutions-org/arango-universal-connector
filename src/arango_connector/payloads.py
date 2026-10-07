@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Payload(BaseModel):
@@ -41,3 +41,37 @@ class MessagePayload(Payload):
     thread_id: str | None = None
     # The message this one replies to; ``None`` for top-level messages and thread roots.
     parent_id: str | None = None
+
+
+class EmailAddress(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    name: str | None = None
+    address: str
+
+
+class EmailPayload(Payload):
+    """An email message (Gmail today; Outlook, IMAP, ... later)."""
+
+    model_config = ConfigDict(frozen=True, populate_by_name=True)
+
+    kind: Literal["email"] = "email"
+    subject: str | None = None
+    # Stored as "from"; the attribute needs a trailing underscore in Python.
+    from_: EmailAddress | None = Field(default=None, alias="from")
+    to: list[EmailAddress] = Field(default_factory=list)
+    cc: list[EmailAddress] = Field(default_factory=list)
+    bcc: list[EmailAddress] = Field(default_factory=list)
+    reply_to: list[EmailAddress] = Field(default_factory=list)
+    # RFC 5322 Message-ID / In-Reply-To / References, for threading across mailboxes.
+    message_id_header: str | None = None
+    in_reply_to: str | None = None
+    references: list[str] = Field(default_factory=list)
+    # The source's own conversation id (Gmail threadId).
+    thread_id: str | None = None
+    label_ids: list[str] = Field(default_factory=list)
+    snippet: str | None = None
+    body_text: str | None = None
+    has_attachments: bool = False
+    # Names only; attachment content is out of scope.
+    attachment_names: list[str] = Field(default_factory=list)
