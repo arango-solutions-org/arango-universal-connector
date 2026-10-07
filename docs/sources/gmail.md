@@ -329,8 +329,9 @@ becomes its own `kind: "attachment"` document in the same collection as the emai
   attachment IDs change on every fetch.
 - **Text extraction** covers PDF, DOCX, HTML and text-like types (plain text, CSV, JSON,
   XML, YAML, Markdown). A generic `application/octet-stream` falls back to the file
-  extension. Other types (images, archives, spreadsheets) are stored without text and
-  with `skipped_reason: "unsupported_type"`. Scanned PDFs without a text layer give
+  extension. Other types (images, archives, spreadsheets, and legacy Word 97-2003
+  `.doc`, which needs an external converter) are stored without text and with
+  `skipped_reason: "unsupported_type"`. Scanned PDFs without a text layer give
   `no_text`, and password-protected ones give `encrypted`. The extractors live in
   `arango_connector/extract.py`, shared by all sources.
 - **When files are downloaded.** Only when the email is ingested for the first time:
