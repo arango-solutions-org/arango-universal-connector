@@ -9,7 +9,7 @@ configuration, how sync works, its document shape, privacy and troubleshooting.
 | Source | `SOURCE=` | Kind | Delivery | Page |
 |---|---|---|---|---|
 | Slack | `slack` | `message` | push (Socket Mode) | [sources/slack.md](sources/slack.md) |
-| Gmail | `gmail` | `email` | poll (Gmail history API) | [sources/gmail.md](sources/gmail.md) |
+| Gmail | `gmail` | `email`, `attachment` | poll (Gmail history API) | [sources/gmail.md](sources/gmail.md) |
 
 ## Adding a source
 

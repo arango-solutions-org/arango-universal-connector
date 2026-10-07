@@ -7,21 +7,18 @@ import binascii
 import copy
 import hashlib
 import html
-import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.header import decode_header, make_header
 from email.utils import getaddresses
-from html.parser import HTMLParser
 from typing import Any
 
 from arango_connector.envelope import Envelope, Scope, make_key
-from arango_connector.payloads import EmailAddress, EmailPayload
-from arango_connector.sources.gmail.config import KeyMode, RawMode
+from arango_connector.extract import extract_text, html_to_text
+from arango_connector.payloads import AttachmentPayload, EmailAddress, EmailPayload
+from arango_connector.sources.gmail.config import AttachmentMode, KeyMode, RawMode
 
 SOURCE = "gmail"
-
-_WHITESPACE = re.compile(r"\s+")
 
 # Headers dropped from ``raw`` when bcc is not stored, so it cannot leak back in.
 _BCC_HEADERS = frozenset({"bcc", "x-original-bcc"})
@@ -82,77 +79,6 @@ def _message_ids(value: str | None) -> list[str]:
 
 
 # -- body ---------------------------------------------------------------------
-
-
-class _HTMLText(HTMLParser):
-    """Collects readable text from HTML: skips script/style, breaks lines at block tags.
-
-    Source whitespace collapses to single spaces, as a browser renders it. ``<br>`` is
-    a hard line break; other block tags only start a new line if one isn't started.
-    """
-
-    _BLOCKS = frozenset(
-        {
-            "p",
-            "div",
-            "li",
-            "tr",
-            "h1",
-            "h2",
-            "h3",
-            "h4",
-            "h5",
-            "h6",
-            "blockquote",
-            "hr",
-            "ul",
-            "ol",
-            "table",
-        }
-    )
-    _SKIP = frozenset({"script", "style", "head", "title"})
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self._parts: list[str] = []
-        self._skip_depth = 0
-
-    def _soft_break(self) -> None:
-        if self._parts and not self._parts[-1].endswith("\n"):
-            self._parts.append("\n")
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in self._SKIP:
-            self._skip_depth += 1
-        elif tag == "br":
-            self._parts.append("\n")
-        elif tag in self._BLOCKS:
-            self._soft_break()
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in self._SKIP:
-            self._skip_depth = max(0, self._skip_depth - 1)
-        elif tag in self._BLOCKS:
-            self._soft_break()
-
-    def handle_data(self, data: str) -> None:
-        if not self._skip_depth:
-            self._parts.append(_WHITESPACE.sub(" ", data))
-
-    def text(self) -> str:
-        lines = (line.strip() for line in "".join(self._parts).split("\n"))
-        out: list[str] = []
-        for line in lines:
-            if line or (out and out[-1]):  # at most one blank line in a row
-                out.append(line)
-        return "\n".join(out).strip()
-
-
-def html_to_text(markup: str) -> str:
-    parser = _HTMLText()
-    parser.feed(markup)
-    parser.close()
-    return parser.text()
 
 
 def _charset(part: dict[str, Any]) -> str:
@@ -309,4 +235,136 @@ def normalize(
             attachment_names=_attachment_names(payload),
         ),
         raw=build_raw(message, options),
+    )
+
+
+# -- attachments ----------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AttachmentOptions:
+    mode: AttachmentMode = "off"
+    max_bytes: int = 10 * 1024 * 1024
+    text_max_chars: int = 1_000_000
+
+    @property
+    def enabled(self) -> bool:
+        return self.mode != "off"
+
+    @property
+    def needs_bytes(self) -> bool:
+        return self.mode in ("content", "text", "all")
+
+    @property
+    def stores_content(self) -> bool:
+        return self.mode in ("content", "all")
+
+    @property
+    def extracts_text(self) -> bool:
+        return self.mode in ("text", "all")
+
+
+@dataclass(frozen=True)
+class AttachmentPart:
+    """One attachment as described by the message's MIME tree (no content)."""
+
+    part_id: str
+    filename: str
+    mime_type: str
+    size: int
+    inline: bool
+    content_id: str | None
+    # Large bodies are fetched separately by id; small ones come inline as data.
+    attachment_id: str | None
+    data: str | None
+    raw: dict[str, Any]
+
+
+def attachment_parts(message: dict[str, Any]) -> list[AttachmentPart]:
+    """Every part with a filename, in MIME order."""
+    parts = []
+    for part in _walk(message.get("payload") or {}):
+        if not part.get("filename"):
+            continue
+        headers = _headers(part)
+        body = part.get("body") or {}
+        raw = copy.deepcopy(part)
+        raw.pop("parts", None)
+        _strip_body_data(raw)
+        content_id = headers.get("content-id", "").strip().strip("<>") or None
+        parts.append(
+            AttachmentPart(
+                part_id=str(part.get("partId") or "0"),
+                filename=str(part["filename"]),
+                mime_type=str(part.get("mimeType") or "application/octet-stream"),
+                size=int(body.get("size") or 0),
+                inline=headers.get("content-disposition", "").lower().startswith("inline"),
+                content_id=content_id,
+                attachment_id=body.get("attachmentId"),
+                data=body.get("data"),
+                raw=raw,
+            )
+        )
+    return parts
+
+
+def decode_part_data(data: str) -> bytes:
+    """Decode Gmail's base64url body data."""
+    return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+
+
+def normalize_attachment(
+    message: dict[str, Any],
+    part: AttachmentPart,
+    mailbox: str,
+    options: NormalizeOptions,
+    attachments: AttachmentOptions,
+    *,
+    data: bytes | None = None,
+    skipped_reason: str | None = None,
+    updated_at: datetime | None = None,
+) -> Envelope[AttachmentPayload]:
+    """Map one attachment to an Envelope. ``data`` is its bytes when they were fetched;
+    ``skipped_reason`` says why they weren't although the mode wanted them."""
+    message_id = str(message["id"])
+    key_part = mailbox_key(mailbox, options.key_mode)
+
+    content_base64 = sha256 = text = None
+    truncated = False
+    if data is not None:
+        sha256 = hashlib.sha256(data).hexdigest()
+        if attachments.stores_content:
+            content_base64 = base64.b64encode(data).decode("ascii")
+        if attachments.extracts_text:
+            extracted = extract_text(
+                data, part.mime_type, part.filename, max_chars=attachments.text_max_chars
+            )
+            text, truncated = extracted.text, extracted.truncated
+            skipped_reason = skipped_reason or extracted.reason
+
+    return Envelope[AttachmentPayload](
+        key=make_key(SOURCE, key_part, message_id, "att", part.part_id),
+        source=SOURCE,
+        source_id=f"{message_id}/{part.part_id}",
+        scope=Scope(tenant_id=mailbox.partition("@")[2].lower(), container_id=key_part),
+        # The message's time, so an attachment expires together with its email.
+        created_at=_internal_date(message),
+        updated_at=updated_at,
+        payload=AttachmentPayload(
+            message_id=message_id,
+            message_key=make_key(SOURCE, key_part, message_id),
+            thread_id=message.get("threadId"),
+            part_id=part.part_id,
+            filename=part.filename,
+            mime_type=part.mime_type,
+            size=len(data) if data is not None else part.size,
+            inline=part.inline,
+            content_id=part.content_id,
+            sha256=sha256,
+            content_base64=content_base64,
+            text=text,
+            text_truncated=truncated,
+            skipped_reason=skipped_reason,
+        ),
+        raw={} if options.raw_mode == "none" else part.raw,
     )

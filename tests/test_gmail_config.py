@@ -31,6 +31,8 @@ GMAIL_VARS = (
     "GMAIL_STORE_BODY",
     "GMAIL_STORE_BCC",
     "GMAIL_LABEL_MATCH",
+    "GMAIL_ATTACHMENTS",
+    "GMAIL_ATTACHMENT_MAX_BYTES",
     "SOURCE",
 )
 
@@ -103,6 +105,9 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch, sa_file: Path) -> None:
     assert s.gmail_raw_mode == "stripped"
     assert s.gmail_store_body and s.gmail_store_bcc
     assert s.gmail_label_match == "thread"
+    assert s.gmail_attachments == "off"
+    assert s.gmail_attachment_max_bytes == 10 * 1024 * 1024
+    assert s.gmail_attachment_text_max_chars == 1_000_000
 
 
 def test_mailboxes_required() -> None:
@@ -163,7 +168,14 @@ def test_lookback_must_be_positive(monkeypatch: pytest.MonkeyPatch, sa_file: Pat
 
 
 @pytest.mark.parametrize(
-    "var", ["GMAIL_KEY_MODE", "GMAIL_RAW_MODE", "GMAIL_AUTH_MODE", "GMAIL_LABEL_MATCH"]
+    "var",
+    [
+        "GMAIL_KEY_MODE",
+        "GMAIL_RAW_MODE",
+        "GMAIL_AUTH_MODE",
+        "GMAIL_LABEL_MATCH",
+        "GMAIL_ATTACHMENTS",
+    ],
 )
 def test_invalid_choices_are_named(
     monkeypatch: pytest.MonkeyPatch, sa_file: Path, var: str
@@ -249,3 +261,25 @@ def test_auth_helper_rejects_web_clients(
     )
     assert code == 2
     assert "needs a 'Desktop app' client" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("mode", ["content", "text", "all"])
+def test_attachment_content_conflicts_with_store_body_false(
+    monkeypatch: pytest.MonkeyPatch, sa_file: Path, mode: str
+) -> None:
+    monkeypatch.setenv("GMAIL_SERVICE_ACCOUNT_FILE", str(sa_file))
+    monkeypatch.setenv("GMAIL_MAILBOXES", "ada@example.com")
+    monkeypatch.setenv("GMAIL_STORE_BODY", "false")
+    monkeypatch.setenv("GMAIL_ATTACHMENTS", mode)
+    with pytest.raises(ConfigError, match="GMAIL_STORE_BODY=false"):
+        load_settings(GmailSettings)
+
+
+def test_attachment_metadata_is_allowed_without_body(
+    monkeypatch: pytest.MonkeyPatch, sa_file: Path
+) -> None:
+    monkeypatch.setenv("GMAIL_SERVICE_ACCOUNT_FILE", str(sa_file))
+    monkeypatch.setenv("GMAIL_MAILBOXES", "ada@example.com")
+    monkeypatch.setenv("GMAIL_STORE_BODY", "false")
+    monkeypatch.setenv("GMAIL_ATTACHMENTS", "metadata")
+    assert load_settings(GmailSettings).gmail_attachments == "metadata"

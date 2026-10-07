@@ -75,3 +75,29 @@ class EmailPayload(Payload):
     has_attachments: bool = False
     # Names only; attachment content is out of scope.
     attachment_names: list[str] = Field(default_factory=list)
+
+
+class AttachmentPayload(Payload):
+    """A file attached to a message (Gmail attachments today; Drive or SharePoint files
+    could share this kind later). Stored as its own envelope next to the message."""
+
+    kind: Literal["attachment"] = "attachment"
+    # The parent message, in the source's terms and as stored (its envelope _key).
+    message_id: str
+    message_key: str
+    thread_id: str | None = None
+    # The MIME part the file came from; stable across fetches, unlike Gmail's attachmentId.
+    part_id: str
+    filename: str
+    mime_type: str
+    size: int = 0
+    # True for inline parts (e.g. images embedded in an HTML body via Content-ID).
+    inline: bool = False
+    content_id: str | None = None
+    sha256: str | None = None
+    content_base64: str | None = None
+    text: str | None = None
+    text_truncated: bool = False
+    # Why content or text is missing although requested: "too_large", "download_failed",
+    # or a text reason such as "unsupported_type", "no_text", "encrypted".
+    skipped_reason: str | None = None

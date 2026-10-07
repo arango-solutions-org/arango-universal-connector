@@ -45,7 +45,7 @@ def build_gmail_adapter(settings: CoreSettings, state: StateStore) -> SourceAdap
     from arango_connector.sources.gmail.auth import build_credentials
     from arango_connector.sources.gmail.client import GmailClient, GoogleGmailClient
     from arango_connector.sources.gmail.config import GmailSettings
-    from arango_connector.sources.gmail.normalize import NormalizeOptions
+    from arango_connector.sources.gmail.normalize import AttachmentOptions, NormalizeOptions
 
     gmail = load_settings(GmailSettings)
 
@@ -70,6 +70,11 @@ def build_gmail_adapter(settings: CoreSettings, state: StateStore) -> SourceAdap
             store_body=gmail.gmail_store_body,
             store_bcc=gmail.gmail_store_bcc,
             raw_mode=gmail.gmail_raw_mode,
+        ),
+        attachments=AttachmentOptions(
+            mode=gmail.gmail_attachments,
+            max_bytes=gmail.gmail_attachment_max_bytes,
+            text_max_chars=gmail.gmail_attachment_text_max_chars,
         ),
         initial_sync=gmail.gmail_initial_sync,
         initial_lookback=gmail.gmail_initial_lookback,

@@ -11,7 +11,16 @@ from typing import Any
 from arango_connector.sources.base import EmitFn
 from arango_connector.sources.gmail.client import GmailClient, HistoryExpiredError
 from arango_connector.sources.gmail.config import InitialSync, LabelMatch
-from arango_connector.sources.gmail.normalize import NormalizeOptions, mailbox_key, normalize
+from arango_connector.sources.gmail.normalize import (
+    AttachmentOptions,
+    AttachmentPart,
+    NormalizeOptions,
+    attachment_parts,
+    decode_part_data,
+    mailbox_key,
+    normalize,
+    normalize_attachment,
+)
 from arango_connector.sources.polling import PollingSourceAdapter
 from arango_connector.state.base import StateStore
 
@@ -54,6 +63,8 @@ class _Changes:
     """What history reported since the cursor, in order of first appearance."""
 
     ids: list[str] = field(default_factory=list)
+    # Messages that are new to the mailbox (or come from a by-date listing).
+    added: set[str] = field(default_factory=set)
     # Messages whose labels changed (re-read with updated_at set).
     relabelled: set[str] = field(default_factory=set)
     # Labels added per message, to spot a watched label being newly applied.
@@ -113,6 +124,7 @@ class GmailPollingAdapter(PollingSourceAdapter):
         include_labels: list[str],
         exclude_labels: list[str],
         options: NormalizeOptions,
+        attachments: AttachmentOptions | None = None,
         initial_sync: InitialSync = "now",
         initial_lookback: timedelta = timedelta(hours=24),
         label_match: LabelMatch = "thread",
@@ -126,6 +138,7 @@ class GmailPollingAdapter(PollingSourceAdapter):
         self._include = list(include_labels)
         self._exclude = list(exclude_labels)
         self._options = options
+        self._attachments = attachments or AttachmentOptions()
         self._initial_sync = initial_sync
         self._initial_lookback = initial_lookback
         self._label_match = label_match
@@ -177,7 +190,7 @@ class GmailPollingAdapter(PollingSourceAdapter):
             history_id = str(client.get_profile()["historyId"])
             since = datetime.fromisoformat(str(cursor["last_synced_at"])) - GAP_OVERLAP
             added = list(client.list_message_ids(_after_query(since)))
-            self._ingest(mailbox, client, labels, _Changes(ids=added), emit)
+            self._ingest(mailbox, client, labels, _Changes(ids=added, added=set(added)), emit)
         else:
             self._ingest(mailbox, client, labels, changes, emit)
 
@@ -201,7 +214,7 @@ class GmailPollingAdapter(PollingSourceAdapter):
                 since.isoformat(),
                 len(ids),
             )
-            self._ingest(mailbox, client, labels, _Changes(ids=ids), emit)
+            self._ingest(mailbox, client, labels, _Changes(ids=ids, added=set(ids)), emit)
         self._save_cursor(mailbox, history_id, started_at)
         logger.info(
             "gmail_mailbox_initialised mailbox=%s initial_sync=%s history_id=%s",
@@ -224,7 +237,9 @@ class GmailPollingAdapter(PollingSourceAdapter):
                         if message_id not in seen:
                             seen.add(message_id)
                             changes.ids.append(message_id)
-                        if kind != "messagesAdded":
+                        if kind == "messagesAdded":
+                            changes.added.add(message_id)
+                        else:
                             changes.relabelled.add(message_id)
                         if kind == "labelsAdded":
                             changes.labels_added.setdefault(message_id, set()).update(
@@ -250,8 +265,13 @@ class GmailPollingAdapter(PollingSourceAdapter):
         queue = list(changes.ids)
         queued = set(queue)
         relabelled = set(changes.relabelled)
+        # Messages being stored for the first time, as far as history tells: new mail,
+        # mail that just gained a watched label, and thread siblings pulled in with it.
+        # Only these get their attachments fetched; a read/unread toggle does not
+        # re-download files that cannot have changed.
+        first_seen = set(changes.added)
         threads: dict[str, list[dict[str, Any]]] = {}  # per-poll cache of thread label sets
-        emitted = skipped = gone = 0
+        emitted = skipped = gone = attachments = 0
         position = 0
         while position < len(queue):
             message_id = queue[position]
@@ -268,9 +288,10 @@ class GmailPollingAdapter(PollingSourceAdapter):
                 skipped += 1
                 continue
 
-            if self._label_match == "thread" and labels.included(
-                changes.labels_added.get(message_id, ())
-            ):
+            watched_label_added = labels.included(changes.labels_added.get(message_id, ()))
+            if watched_label_added:
+                first_seen.add(message_id)
+            if self._label_match == "thread" and watched_label_added:
                 # A watched label was just applied: bring in the rest of the conversation.
                 for sibling in self._thread(client, threads, message):
                     sibling_id = str(sibling["id"])
@@ -278,6 +299,7 @@ class GmailPollingAdapter(PollingSourceAdapter):
                         queued.add(sibling_id)
                         queue.append(sibling_id)
                         relabelled.add(sibling_id)
+                        first_seen.add(sibling_id)
 
             updated_at = self._clock() if message_id in relabelled else None
             envelope = normalize(message, mailbox.address, self._options, updated_at=updated_at)
@@ -286,15 +308,66 @@ class GmailPollingAdapter(PollingSourceAdapter):
                 continue
             emit(envelope)
             emitted += 1
+            if self._attachments.enabled and message_id in first_seen:
+                attachments += self._emit_attachments(mailbox, client, message, updated_at, emit)
         if queue:
             logger.info(
-                "gmail_mailbox_synced mailbox=%s changed=%s emitted=%s filtered=%s gone=%s",
+                "gmail_mailbox_synced mailbox=%s changed=%s emitted=%s filtered=%s gone=%s "
+                "attachments=%s",
                 mailbox.key,
                 len(queue),
                 emitted,
                 skipped,
                 gone,
+                attachments,
             )
+
+    def _emit_attachments(
+        self,
+        mailbox: _Mailbox,
+        client: GmailClient,
+        message: dict[str, Any],
+        updated_at: datetime | None,
+        emit: EmitFn,
+    ) -> int:
+        """Emit one envelope per attachment of ``message``; returns how many."""
+        count = 0
+        for part in attachment_parts(message):
+            data, skipped_reason = self._attachment_bytes(client, message, part)
+            emit(
+                normalize_attachment(
+                    message,
+                    part,
+                    mailbox.address,
+                    self._options,
+                    self._attachments,
+                    data=data,
+                    skipped_reason=skipped_reason,
+                    updated_at=updated_at,
+                )
+            )
+            count += 1
+        return count
+
+    def _attachment_bytes(
+        self, client: GmailClient, message: dict[str, Any], part: AttachmentPart
+    ) -> tuple[bytes | None, str | None]:
+        """The attachment's bytes when the mode needs them, else why there are none.
+
+        A transient API error propagates, failing this mailbox's sync so the next poll
+        retries from the same cursor.
+        """
+        if not self._attachments.needs_bytes:
+            return None, None
+        if part.size > self._attachments.max_bytes:
+            return None, "too_large"
+        if part.data:
+            return decode_part_data(part.data), None
+        if part.attachment_id:
+            data = client.get_attachment(str(message["id"]), part.attachment_id)
+            if data is not None:
+                return data, None
+        return None, "download_failed"
 
     def _qualifies(
         self,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Iterator
 from typing import Any, Protocol
 
@@ -40,6 +41,10 @@ class GmailClient(Protocol):
 
     def get_thread_messages(self, thread_id: str) -> list[dict[str, Any]]:
         """The thread's messages as ``{id, labelIds}`` (no content); ``[]`` if it is gone."""
+        ...
+
+    def get_attachment(self, message_id: str, attachment_id: str) -> bytes | None:
+        """An attachment's bytes, or ``None`` if the message or attachment is gone."""
         ...
 
 
@@ -136,3 +141,18 @@ class GoogleGmailClient:
             {"id": m["id"], "labelIds": list(m.get("labelIds", []))}
             for m in thread.get("messages", [])
         ]
+
+    def get_attachment(self, message_id: str, attachment_id: str) -> bytes | None:
+        try:
+            result = (
+                self._users.messages()
+                .attachments()
+                .get(userId="me", messageId=message_id, id=attachment_id)
+                .execute(num_retries=NUM_RETRIES)
+            )
+        except HttpError as exc:
+            if _status(exc) == 404:
+                return None
+            raise
+        data = str(result.get("data", ""))
+        return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from typing import Any
 
@@ -96,3 +97,16 @@ def test_thread_messages_are_ids_and_labels_only() -> None:
 def test_missing_thread_is_empty() -> None:
     client, _ = _client(_error(404))
     assert client.get_thread_messages("gone") == []
+
+
+def test_attachment_bytes_are_decoded() -> None:
+    data = base64.urlsafe_b64encode(b"%PDF-1.4 bytes").decode().rstrip("=")
+    client, http = _client((200, {"size": 14, "data": data}))
+    assert client.get_attachment("m1", "att1") == b"%PDF-1.4 bytes"
+    [(uri, *_)] = http.request_sequence
+    assert "/messages/m1/attachments/att1" in uri
+
+
+def test_missing_attachment_is_none() -> None:
+    client, _ = _client(_error(404))
+    assert client.get_attachment("m1", "gone") is None
