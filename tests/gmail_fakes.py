@@ -105,6 +105,7 @@ class FakeGmailClient:
         self.fail_get: set[str] = set()
         self.queries: list[str] = []
         self.gets: list[str] = []
+        self.thread_gets: list[str] = []
 
     # -- mutations used by tests -------------------------------------------
 
@@ -163,6 +164,14 @@ class FakeGmailClient:
         for message_id, msg in self.messages.items():
             if int(msg["internalDate"]) > after_ms:
                 yield message_id
+
+    def get_thread_messages(self, thread_id: str) -> list[dict[str, Any]]:
+        self.thread_gets.append(thread_id)
+        return [
+            {"id": m["id"], "labelIds": list(m["labelIds"])}
+            for m in self.messages.values()
+            if m["threadId"] == thread_id
+        ]
 
     def get_message(self, message_id: str) -> dict[str, Any] | None:
         self.gets.append(message_id)

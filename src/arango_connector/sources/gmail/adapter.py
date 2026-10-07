@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from arango_connector.sources.base import EmitFn
 from arango_connector.sources.gmail.client import GmailClient, HistoryExpiredError
-from arango_connector.sources.gmail.config import InitialSync
+from arango_connector.sources.gmail.config import InitialSync, LabelMatch
 from arango_connector.sources.gmail.normalize import NormalizeOptions, mailbox_key, normalize
 from arango_connector.sources.polling import PollingSourceAdapter
 from arango_connector.state.base import StateStore
@@ -38,9 +38,26 @@ class LabelFilter:
     include: frozenset[str]
     exclude: frozenset[str]
 
+    def included(self, label_ids: Iterable[str]) -> bool:
+        return bool(self.include.intersection(label_ids))
+
+    def excluded(self, label_ids: Iterable[str]) -> bool:
+        return bool(self.exclude.intersection(label_ids))
+
     def matches(self, label_ids: Iterable[str]) -> bool:
-        labels = set(label_ids)
-        return bool(labels & self.include) and not labels & self.exclude
+        labels = list(label_ids)
+        return self.included(labels) and not self.excluded(labels)
+
+
+@dataclass
+class _Changes:
+    """What history reported since the cursor, in order of first appearance."""
+
+    ids: list[str] = field(default_factory=list)
+    # Messages whose labels changed (re-read with updated_at set).
+    relabelled: set[str] = field(default_factory=set)
+    # Labels added per message, to spot a watched label being newly applied.
+    labels_added: dict[str, set[str]] = field(default_factory=dict)
 
 
 def resolve_labels(
@@ -98,6 +115,7 @@ class GmailPollingAdapter(PollingSourceAdapter):
         options: NormalizeOptions,
         initial_sync: InitialSync = "now",
         initial_lookback: timedelta = timedelta(hours=24),
+        label_match: LabelMatch = "thread",
         interval_seconds: float = 60,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -110,6 +128,7 @@ class GmailPollingAdapter(PollingSourceAdapter):
         self._options = options
         self._initial_sync = initial_sync
         self._initial_lookback = initial_lookback
+        self._label_match = label_match
         self._clock = clock
 
     def poll_once(self, emit: EmitFn) -> None:
@@ -146,7 +165,7 @@ class GmailPollingAdapter(PollingSourceAdapter):
             return
 
         try:
-            changed, history_id = self._collect_history(client, str(cursor["history_id"]))
+            changes, history_id = self._collect_history(client, str(cursor["history_id"]))
         except HistoryExpiredError:
             logger.warning(
                 "gmail_history_gap mailbox=%s history_id=%s catching up by date",
@@ -158,10 +177,9 @@ class GmailPollingAdapter(PollingSourceAdapter):
             history_id = str(client.get_profile()["historyId"])
             since = datetime.fromisoformat(str(cursor["last_synced_at"])) - GAP_OVERLAP
             added = list(client.list_message_ids(_after_query(since)))
-            self._ingest(mailbox, client, labels, added, set(), emit)
+            self._ingest(mailbox, client, labels, _Changes(ids=added), emit)
         else:
-            added, relabelled = changed
-            self._ingest(mailbox, client, labels, added, relabelled, emit)
+            self._ingest(mailbox, client, labels, changes, emit)
 
         self._save_cursor(mailbox, history_id, started_at)
 
@@ -183,7 +201,7 @@ class GmailPollingAdapter(PollingSourceAdapter):
                 since.isoformat(),
                 len(ids),
             )
-            self._ingest(mailbox, client, labels, ids, set(), emit)
+            self._ingest(mailbox, client, labels, _Changes(ids=ids), emit)
         self._save_cursor(mailbox, history_id, started_at)
         logger.info(
             "gmail_mailbox_initialised mailbox=%s initial_sync=%s history_id=%s",
@@ -192,39 +210,52 @@ class GmailPollingAdapter(PollingSourceAdapter):
             history_id,
         )
 
-    def _collect_history(
-        self, client: GmailClient, start_history_id: str
-    ) -> tuple[tuple[list[str], set[str]], str]:
-        """Message ids changed since ``start_history_id``, and the history id to resume from.
-
-        Returns ``((all ids in order, ids whose labels changed), latest history id)``.
-        """
-        ordered: dict[str, None] = {}
-        relabelled: set[str] = set()
+    def _collect_history(self, client: GmailClient, start_history_id: str) -> tuple[_Changes, str]:
+        """Messages changed since ``start_history_id``, and the history id to resume from."""
+        changes = _Changes()
+        seen: set[str] = set()
         latest = start_history_id
         for page in client.list_history(start_history_id):
             latest = str(page.get("historyId", latest))
             for record in page.get("history", []):
-                for entry in record.get("messagesAdded", []):
-                    ordered.setdefault(str(entry["message"]["id"]), None)
-                for kind in ("labelsAdded", "labelsRemoved"):
+                for kind in ("messagesAdded", "labelsAdded", "labelsRemoved"):
                     for entry in record.get(kind, []):
                         message_id = str(entry["message"]["id"])
-                        ordered.setdefault(message_id, None)
-                        relabelled.add(message_id)
-        return (list(ordered), relabelled), latest
+                        if message_id not in seen:
+                            seen.add(message_id)
+                            changes.ids.append(message_id)
+                        if kind != "messagesAdded":
+                            changes.relabelled.add(message_id)
+                        if kind == "labelsAdded":
+                            changes.labels_added.setdefault(message_id, set()).update(
+                                entry.get("labelIds", [])
+                            )
+        return changes, latest
 
     def _ingest(
         self,
         mailbox: _Mailbox,
         client: GmailClient,
         labels: LabelFilter,
-        message_ids: list[str],
-        relabelled: set[str],
+        changes: _Changes,
         emit: EmitFn,
     ) -> None:
+        """Fetch each changed message and emit those that pass the label filter.
+
+        In ``thread`` mode a message also qualifies through its thread, so replies
+        to a labelled conversation are ingested; and a watched label newly added to a
+        message pulls in the rest of its thread. Excluded labels always apply to the
+        message itself.
+        """
+        queue = list(changes.ids)
+        queued = set(queue)
+        relabelled = set(changes.relabelled)
+        threads: dict[str, list[dict[str, Any]]] = {}  # per-poll cache of thread label sets
         emitted = skipped = gone = 0
-        for message_id in message_ids:
+        position = 0
+        while position < len(queue):
+            message_id = queue[position]
+            position += 1
             if self.stopping:
                 # Leave the cursor where it was; the next start re-reads from there.
                 raise _Stopping
@@ -232,9 +263,22 @@ class GmailPollingAdapter(PollingSourceAdapter):
             if message is None:
                 gone += 1  # deleted since the history entry; deletes are out of scope
                 continue
-            if not labels.matches(message.get("labelIds") or []):
+            own = message.get("labelIds") or []
+            if labels.excluded(own) or not self._qualifies(client, labels, message, threads):
                 skipped += 1
                 continue
+
+            if self._label_match == "thread" and labels.included(
+                changes.labels_added.get(message_id, ())
+            ):
+                # A watched label was just applied: bring in the rest of the conversation.
+                for sibling in self._thread(client, threads, message):
+                    sibling_id = str(sibling["id"])
+                    if sibling_id not in queued:
+                        queued.add(sibling_id)
+                        queue.append(sibling_id)
+                        relabelled.add(sibling_id)
+
             updated_at = self._clock() if message_id in relabelled else None
             envelope = normalize(message, mailbox.address, self._options, updated_at=updated_at)
             if envelope is None:
@@ -242,15 +286,45 @@ class GmailPollingAdapter(PollingSourceAdapter):
                 continue
             emit(envelope)
             emitted += 1
-        if message_ids:
+        if queue:
             logger.info(
                 "gmail_mailbox_synced mailbox=%s changed=%s emitted=%s filtered=%s gone=%s",
                 mailbox.key,
-                len(message_ids),
+                len(queue),
                 emitted,
                 skipped,
                 gone,
             )
+
+    def _qualifies(
+        self,
+        client: GmailClient,
+        labels: LabelFilter,
+        message: dict[str, Any],
+        threads: dict[str, list[dict[str, Any]]],
+    ) -> bool:
+        """Whether a (non-excluded) message carries, or its thread carries, a watched label."""
+        if labels.included(message.get("labelIds") or []):
+            return True
+        if self._label_match != "thread":
+            return False
+        # Only messages that are not themselves excluded can qualify their thread, so a
+        # labelled message sitting in spam does not pull in its conversation.
+        return any(
+            labels.matches(sibling.get("labelIds") or [])
+            for sibling in self._thread(client, threads, message)
+        )
+
+    def _thread(
+        self,
+        client: GmailClient,
+        threads: dict[str, list[dict[str, Any]]],
+        message: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        thread_id = str(message.get("threadId") or message["id"])
+        if thread_id not in threads:
+            threads[thread_id] = client.get_thread_messages(thread_id)
+        return threads[thread_id]
 
     def _save_cursor(self, mailbox: _Mailbox, history_id: str, synced_at: datetime) -> None:
         self._state.put(

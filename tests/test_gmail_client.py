@@ -79,3 +79,20 @@ def test_profile_and_labels() -> None:
     )
     assert client.get_profile()["historyId"] == "42"
     assert client.list_labels() == [{"id": "INBOX", "name": "INBOX"}]
+
+
+def test_thread_messages_are_ids_and_labels_only() -> None:
+    client, http = _client(
+        (200, {"id": "t", "messages": [{"id": "a", "labelIds": ["INBOX"]}, {"id": "b"}]})
+    )
+    assert client.get_thread_messages("t") == [
+        {"id": "a", "labelIds": ["INBOX"]},
+        {"id": "b", "labelIds": []},
+    ]
+    [(uri, *_)] = http.request_sequence
+    assert "format=minimal" in uri
+
+
+def test_missing_thread_is_empty() -> None:
+    client, _ = _client(_error(404))
+    assert client.get_thread_messages("gone") == []

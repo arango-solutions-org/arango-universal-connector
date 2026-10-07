@@ -30,6 +30,7 @@ GMAIL_VARS = (
     "GMAIL_RAW_MODE",
     "GMAIL_STORE_BODY",
     "GMAIL_STORE_BCC",
+    "GMAIL_LABEL_MATCH",
     "SOURCE",
 )
 
@@ -101,6 +102,7 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch, sa_file: Path) -> None:
     assert s.gmail_key_mode == "hashed"
     assert s.gmail_raw_mode == "stripped"
     assert s.gmail_store_body and s.gmail_store_bcc
+    assert s.gmail_label_match == "thread"
 
 
 def test_mailboxes_required() -> None:
@@ -160,7 +162,9 @@ def test_lookback_must_be_positive(monkeypatch: pytest.MonkeyPatch, sa_file: Pat
         load_settings(GmailSettings)
 
 
-@pytest.mark.parametrize("var", ["GMAIL_KEY_MODE", "GMAIL_RAW_MODE", "GMAIL_AUTH_MODE"])
+@pytest.mark.parametrize(
+    "var", ["GMAIL_KEY_MODE", "GMAIL_RAW_MODE", "GMAIL_AUTH_MODE", "GMAIL_LABEL_MATCH"]
+)
 def test_invalid_choices_are_named(
     monkeypatch: pytest.MonkeyPatch, sa_file: Path, var: str
 ) -> None:

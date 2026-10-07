@@ -38,6 +38,10 @@ class GmailClient(Protocol):
         """The message in ``format=full``, or ``None`` if it no longer exists."""
         ...
 
+    def get_thread_messages(self, thread_id: str) -> list[dict[str, Any]]:
+        """The thread's messages as ``{id, labelIds}`` (no content); ``[]`` if it is gone."""
+        ...
+
 
 def _status(exc: HttpError) -> int:
     return int(getattr(exc.resp, "status", 0) or 0)
@@ -116,3 +120,19 @@ class GoogleGmailClient:
                 return None
             raise
         return result
+
+    def get_thread_messages(self, thread_id: str) -> list[dict[str, Any]]:
+        try:
+            thread: dict[str, Any] = (
+                self._users.threads()
+                .get(userId="me", id=thread_id, format="minimal")
+                .execute(num_retries=NUM_RETRIES)
+            )
+        except HttpError as exc:
+            if _status(exc) == 404:
+                return []
+            raise
+        return [
+            {"id": m["id"], "labelIds": list(m.get("labelIds", []))}
+            for m in thread.get("messages", [])
+        ]

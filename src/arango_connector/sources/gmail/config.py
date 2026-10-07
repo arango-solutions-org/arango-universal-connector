@@ -16,6 +16,7 @@ AuthMode = Literal["service_account", "oauth"]
 InitialSync = Literal["now", "lookback"]
 KeyMode = Literal["hashed", "plain"]
 RawMode = Literal["full", "stripped", "none"]
+LabelMatch = Literal["thread", "message"]
 
 _DURATION_RE = re.compile(r"^\s*(\d+)\s*([smhd])\s*$", re.IGNORECASE)
 _DURATION_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
@@ -49,6 +50,10 @@ class GmailSettings(ConnectorSettings):
     gmail_exclude_labels: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["SPAM", "TRASH", "DRAFT"]
     )
+
+    # thread: a message qualifies if any message in its thread carries a watched label
+    # (as Gmail's conversation view shows it). message: only its own labels count.
+    gmail_label_match: LabelMatch = "thread"
 
     gmail_poll_interval_seconds: float = Field(default=60, gt=0)
     gmail_initial_sync: InitialSync = "now"

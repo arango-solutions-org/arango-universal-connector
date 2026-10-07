@@ -150,7 +150,8 @@ The connector refuses to start if the key file, or any mailbox's token file, is 
 | `GMAIL_SERVICE_ACCOUNT_FILE` | required for `service_account` | JSON key with domain-wide delegation |
 | `GMAIL_OAUTH_TOKEN_DIR` | required for `oauth` | One `<mailbox>.json` per mailbox |
 | `GMAIL_LABELS` | `INBOX,SENT` | Ingest mail with **any** of these. Label IDs or names (names are resolved per mailbox, case-insensitive). The default captures both sides of conversations |
-| `GMAIL_EXCLUDE_LABELS` | `SPAM,TRASH,DRAFT` | ... and **none** of these |
+| `GMAIL_EXCLUDE_LABELS` | `SPAM,TRASH,DRAFT` | ... and **none** of these. Always checked on the message itself |
+| `GMAIL_LABEL_MATCH` | `thread` | `thread`: a message qualifies if **any message in its thread** carries a watched label, as Gmail's conversation view shows it, so replies come along. `message`: only the message's own labels count |
 | `GMAIL_POLL_INTERVAL_SECONDS` | `60` | |
 | `GMAIL_INITIAL_SYNC` | `now` | First start for a mailbox: `now` takes only new mail; `lookback` also takes recent mail |
 | `GMAIL_INITIAL_LOOKBACK` | `24h` | For `lookback`: e.g. `90m`, `24h`, `7d`. Bounded; this is not a full backfill |
@@ -219,6 +220,15 @@ or changing their owner to that uid.
   gains a watched label later (for example, moved back to the inbox) is ingested then.
   A label change rewrites the stored document with the current `label_ids` and sets
   `updated_at`, so toggling read/unread rewrites it too.
+- **Threads.** Gmail shows labels per conversation but stores them per message, and a
+  reply arriving after you labelled a conversation does not get the label. With
+  `GMAIL_LABEL_MATCH=thread` (the default), a message also qualifies when another,
+  non-excluded message in its thread has a watched label, so replies and follow-ups
+  are ingested. Applying a watched label to one message also pulls in the rest of its
+  thread. A spam or trashed message is never ingested, and a labelled message in spam
+  does not qualify its thread. The thread check costs one small `threads.get` per
+  thread per poll, and only for messages that are not labelled themselves. Set
+  `GMAIL_LABEL_MATCH=message` to require each message's own label.
 - **What is not removed.** Mail that is deleted, trashed or moved out of watched labels
   stays stored until retention removes it, as with Slack deletes.
 - **History gaps.** Gmail keeps history for about a week. If the connector was down
@@ -271,7 +281,9 @@ or the address, per `GMAIL_KEY_MODE`), `path` = `[]`.
   converted to text. Encoded subjects and names (RFC 2047) are decoded.
 - `thread_id` is Gmail's thread. `message_id_header`, `in_reply_to` and `references`
   allow threading across mailboxes.
-- `label_ids` are Gmail label IDs (`INBOX`, `Label_123`, …), not names.
+- `label_ids` are Gmail label IDs (`INBOX`, `Label_123`, …), not names. They are the
+  message's own labels; in `thread` mode a message can be stored without a watched
+  label because its thread has one.
 
 ## Privacy and security
 

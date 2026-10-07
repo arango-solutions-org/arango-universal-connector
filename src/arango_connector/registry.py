@@ -73,6 +73,7 @@ def build_gmail_adapter(settings: CoreSettings, state: StateStore) -> SourceAdap
         ),
         initial_sync=gmail.gmail_initial_sync,
         initial_lookback=gmail.gmail_initial_lookback,
+        label_match=gmail.gmail_label_match,
         interval_seconds=gmail.gmail_poll_interval_seconds,
     )
 
