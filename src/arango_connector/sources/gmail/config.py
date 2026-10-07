@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -10,7 +9,7 @@ from typing import Annotated, Any, Literal
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import NoDecode
 
-from arango_connector.config import ConnectorSettings, split_csv
+from arango_connector.config import ConnectorSettings, parse_duration, split_csv
 
 AuthMode = Literal["service_account", "oauth"]
 InitialSync = Literal["now", "lookback"]
@@ -18,21 +17,6 @@ KeyMode = Literal["hashed", "plain"]
 RawMode = Literal["full", "stripped", "none"]
 LabelMatch = Literal["thread", "message"]
 AttachmentMode = Literal["off", "metadata", "content", "text", "all"]
-
-_DURATION_RE = re.compile(r"^\s*(\d+)\s*([smhd])\s*$", re.IGNORECASE)
-_DURATION_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
-
-
-def parse_duration(value: Any) -> Any:
-    """Accept ``"90m"``, ``"24h"``, ``"7d"``, ``"3600s"`` or a number of seconds."""
-    if isinstance(value, str):
-        match = _DURATION_RE.match(value)
-        if match:
-            amount, unit = match.groups()
-            return timedelta(**{_DURATION_UNITS[unit.lower()]: int(amount)})
-        if value.strip().isdigit():
-            return timedelta(seconds=int(value))
-    return value
 
 
 class GmailSettings(ConnectorSettings):

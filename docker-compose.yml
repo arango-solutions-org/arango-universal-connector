@@ -49,6 +49,26 @@ services:
       - ./secrets/gmail:/secrets/gmail:ro
     restart: unless-stopped
 
+  # Jira runs as its own connector process, writing to its own collection. Retention is
+  # off by default: it counts from created_at, and an old issue updated today would be
+  # stored already expired. Start it with: docker compose --profile jira up -d
+  connector-jira:
+    profiles: ["jira"]
+    build: .
+    env_file: .env
+    environment:
+      SOURCE: jira
+      ARANGO_HOSTS: http://arangodb:8529
+      ARANGO_COLLECTION: ${JIRA_ARANGO_COLLECTION:-jira}
+      RETENTION_DAYS: ${JIRA_RETENTION_DAYS:-0}
+      DEAD_LETTER_PATH: /data/jira_dead_letter.jsonl
+    depends_on:
+      arangodb:
+        condition: service_healthy
+    volumes:
+      - connector_data:/data
+    restart: unless-stopped
+
 volumes:
   arangodb_data:
   arangodb_apps:

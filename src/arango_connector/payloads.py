@@ -16,6 +16,7 @@ TODO(future): kinds for upcoming sources follow the same pattern, e.g.
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -75,6 +76,62 @@ class EmailPayload(Payload):
     has_attachments: bool = False
     # Names only; attachment content is out of scope.
     attachment_names: list[str] = Field(default_factory=list)
+
+
+class IssuePayload(Payload):
+    """A tracked work item (Jira today; GitHub Issues, Linear, ... later)."""
+
+    kind: Literal["issue"] = "issue"
+    # The human-readable key (Jira ``PROJ-123``). It changes when an issue moves project,
+    # which is why the Envelope key uses the stable ``source_id`` instead.
+    issue_key: str
+    project_key: str | None = None
+    summary: str = ""
+    # Plain text; the source's rich format (Jira ADF) stays in ``raw``.
+    description: str = ""
+    issue_type: str | None = None
+    status: str | None = None
+    # The workflow-independent bucket: ``new``, ``indeterminate`` or ``done`` in Jira.
+    status_category: str | None = None
+    priority: str | None = None
+    resolution: str | None = None
+    resolved_at: datetime | None = None
+    due_date: date | None = None
+    labels: list[str] = Field(default_factory=list)
+    components: list[str] = Field(default_factory=list)
+    assignee_id: str | None = None
+    assignee_name: str | None = None
+    reporter_id: str | None = None
+    reporter_name: str | None = None
+    # The parent issue (epic, or the story of a sub-task), if any.
+    parent_id: str | None = None
+    parent_key: str | None = None
+    url: str | None = None
+    comment_count: int = 0
+
+
+class CommentVisibility(BaseModel):
+    """A restriction on who may see a comment (Jira: a project role or a group)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    type: str
+    value: str
+
+
+class CommentPayload(Payload):
+    """A comment on an item such as an issue (Jira today)."""
+
+    kind: Literal["comment"] = "comment"
+    author_id: str | None = None
+    author_name: str | None = None
+    author_type: Literal["user", "bot", "system"] = "user"
+    text: str = ""
+    # The item commented on: its ``source_id`` and human-readable key.
+    parent_id: str
+    parent_key: str | None = None
+    # ``None`` when everyone who can see the parent can see the comment.
+    visibility: CommentVisibility | None = None
 
 
 class AttachmentPayload(Payload):

@@ -100,6 +100,35 @@ def build_gmail_adapter(settings: CoreSettings, state: StateStore) -> SourceAdap
     )
 
 
+def build_jira_adapter(settings: CoreSettings, state: StateStore) -> SourceAdapter:
+    """Build the Jira Cloud polling adapter. Its cursors live in ``state``."""
+    from arango_connector.sources.jira.adapter import JiraPollingAdapter
+    from arango_connector.sources.jira.client import JiraClient, RequestsJiraClient
+    from arango_connector.sources.jira.config import JiraSettings
+
+    jira = load_settings(JiraSettings)
+
+    def client_factory(should_stop: Callable[[], bool]) -> JiraClient:
+        return RequestsJiraClient(
+            jira.jira_base_url,
+            jira.jira_email,
+            jira.jira_api_token.get_secret_value(),
+            page_size=jira.jira_page_size,
+            should_stop=should_stop,
+        )
+
+    return JiraPollingAdapter(
+        jira.jira_projects,
+        client_factory,
+        state,
+        site=jira.jira_site,
+        base_url=jira.jira_base_url,
+        initial_sync=jira.jira_initial_sync,
+        initial_lookback=jira.jira_initial_lookback,
+        interval_seconds=jira.jira_poll_interval_seconds,
+    )
+
+
 def build_arango_sink(settings: CoreSettings) -> Sink:
     """Build the ArangoDB sink from settings."""
     from arango_connector.sinks.arango import ArangoSink
@@ -131,6 +160,7 @@ def build_state_store(settings: CoreSettings) -> StateStore:
 SOURCES: dict[str, SourceFactory] = {
     "slack": build_slack_adapter,
     "gmail": build_gmail_adapter,
+    "jira": build_jira_adapter,
 }
 
 SOURCE_INFO: dict[str, SourceInfo] = {

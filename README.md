@@ -1,18 +1,18 @@
 # Arango Connector
 
 A Python service that streams messages from Slack channels (in real time, over Socket
-Mode) and emails from Gmail mailboxes (polled incrementally) into ArangoDB as JSON
-documents.
+Mode), emails from Gmail mailboxes and issues and comments from Jira Cloud projects
+(both polled incrementally) into ArangoDB as JSON documents.
 
-This is the MVP of a **universal connector**: sources (Slack and Gmail today; Teams,
+This is the MVP of a **universal connector**: sources (Slack, Gmail and Jira today; Teams,
 SharePoint, … later) are normalized into a source-agnostic [`Envelope`](#document-shape)
 and written by a `Sink` (ArangoDB today). Each connector process runs one source.
 
 ```
 Slack (Socket Mode) ──► SlackSocketModeAdapter ──► normalize() ──┐
-                                                                 ├─► Envelope ──► Pipeline ──► ArangoSink ──► connector/<collection>
-Gmail (history API) ──► GmailPollingAdapter ────► normalize() ──┘                  │  (stamps expires_at)
-        ▲ cursor per mailbox in connector_state                                     └─ on final failure ──► dead_letter.jsonl
+Gmail (history API) ──► GmailPollingAdapter ────► normalize() ──┼─► Envelope ──► Pipeline ──► ArangoSink ──► connector/<collection>
+Jira (JQL search) ────► JiraPollingAdapter ─────► normalize() ──┘                  │  (stamps expires_at)
+        ▲ cursor per mailbox / project in connector_state                           └─ on final failure ──► dead_letter.jsonl
 ```
 
 ## Sources
@@ -20,12 +20,11 @@ Gmail (history API) ──► GmailPollingAdapter ────► normalize() �
 Each source has a page with setup, configuration, how sync works, its document shape,
 privacy notes and troubleshooting.
 
-<!-- BEGIN GENERATED: catalogue -->
-| Source | `SOURCE=` | Kinds | Delivery | What it ingests | Docs |
-|---|---|---|---|---|---|
-| Slack | `slack` | `message` | push (Socket Mode) | Messages, thread replies and edits from allowlisted channels, in real time. | [Slack docs](docs/sources/slack.md) |
-| Gmail | `gmail` | `email`, `attachment` | poll (Gmail history API) | Email from selected mailboxes and labels, incrementally, with optional attachments and text extraction. | [Gmail docs](docs/sources/gmail.md) |
-<!-- END GENERATED: catalogue -->
+| Source | `SOURCE=` | Kind | Delivery | Setup and reference |
+|---|---|---|---|---|
+| Slack | `slack` | `message` | push (Socket Mode) | [docs/sources/slack.md](docs/sources/slack.md) |
+| Gmail | `gmail` | `email` | poll (Gmail history API) | [docs/sources/gmail.md](docs/sources/gmail.md) |
+| Jira Cloud | `jira` | `issue`, `comment` | poll (incremental JQL) | [docs/sources/jira.md](docs/sources/jira.md) |
 
 ## What it does
 
@@ -59,6 +58,7 @@ run it outside Docker.
    ```bash
    docker compose up --build                    # Slack (the default connector service)
    docker compose --profile gmail up --build    # adds the Gmail connector service
+   docker compose --profile jira up --build     # adds the Jira connector service
    ```
 
 4. Open the ArangoDB web UI at <http://localhost:8529> (user `root`, your
@@ -72,31 +72,27 @@ To run the connector outside Docker: `docker compose up -d arangodb`, then
 
 All settings come from environment variables or `.env`.
 
-<!-- BEGIN GENERATED: config:core -->
-| Variable | Default | Values | Description |
-|---|---|---|---|
-| `SOURCE` | `slack` | text | Source adapter to run (one source per process). |
-| `SINK` | `arango` | text | Sink to write to. |
-| `ARANGO_HOSTS` | `http://localhost:8529` | comma-separated | ArangoDB endpoint(s), comma-separated for multiple coordinators. |
-| `ARANGO_USERNAME` | `root` | text | ArangoDB user. |
-| `ARANGO_PASSWORD` | **required** | secret | ArangoDB password. Also the root password of the Compose ArangoDB. |
-| `ARANGO_DB` | `connector` | text | Database, created on first start if missing. |
-| `ARANGO_COLLECTION` | `messages` | text | Collection envelopes are written to. |
-| `STATE_COLLECTION` | `connector_state` | text | Collection holding source sync cursors (e.g. Gmail historyId). Never subject to retention. |
-| `RETENTION_DAYS` | `30` | integer ≥ 0 | Delete envelopes this many days after they were posted, in ArangoDB and the dead-letter file. `0` disables retention. |
-| `RETENTION_MODE` | `expiry` | `expiry` \| `age` | `expiry`: each document stores its own `expires_at`, fixed at write time. `age`: documents expire `RETENTION_DAYS` after `RETENTION_AGE_FIELD`. |
-| `RETENTION_AGE_FIELD` | `created_at` | `created_at` \| `ingested_at` | `age` mode only: the date retention counts from. |
-| `DEAD_LETTER_PATH` | `./dead_letter.jsonl` | path | JSONL file for envelopes that still fail after retries (`/data/dead_letter.jsonl` in Docker). |
-| `LOG_LEVEL` | `INFO` | text | Python log level. |
-<!-- END GENERATED: config:core -->
+| Variable            | Required | Default                 | Notes                                    |
+|---------------------|----------|-------------------------|------------------------------------------|
+| `SOURCE`            | no       | `slack`                 | Source adapter name (see `registry.py`)  |
+| `SINK`              | no       | `arango`                | Sink name (see `registry.py`)            |
+| `SLACK_*`           | slack    |                         | See [Slack configuration](docs/sources/slack.md#configuration) |
+| `GMAIL_*`           | gmail    |                         | See [Gmail configuration](docs/sources/gmail.md#configuration) |
+| `JIRA_*`            | jira     |                         | See [Jira configuration](docs/sources/jira.md#configuration) |
+| `ARANGO_HOSTS`      | no       | `http://localhost:8529` | Comma-separated for multiple coordinators |
+| `ARANGO_USERNAME`   | no       | `root`                  |                                          |
+| `ARANGO_PASSWORD`   | yes      | —                       | Also the ArangoDB root password in Compose |
+| `ARANGO_DB`         | no       | `connector`             |                                          |
+| `ARANGO_COLLECTION` | no       | `messages`              |                                          |
+| `STATE_COLLECTION`  | no       | `connector_state`       | Source sync cursors; never expired       |
+| `RETENTION_DAYS`    | no       | `30`                    | Delete envelopes this many days after they were posted, in ArangoDB and the dead-letter file; `0` disables |
+| `RETENTION_MODE`    | no       | `expiry`                | `expiry` (per-document deadline) or `age`. See [Retention](#retention) |
+| `RETENTION_AGE_FIELD` | no     | `created_at`            | `age` mode only: `created_at` or `ingested_at` |
+| `DEAD_LETTER_PATH`  | no       | `./dead_letter.jsonl`   | `/data/dead_letter.jsonl` in Docker      |
+| `LOG_LEVEL`         | no       | `INFO`                  |                                          |
 
-<!-- BEGIN GENERATED: source-settings -->
-- `SLACK_*`: required only when `SOURCE=slack`. See [Slack configuration](docs/sources/slack.md#configuration).
-- `GMAIL_*`: required only when `SOURCE=gmail`. See [Gmail configuration](docs/sources/gmail.md#configuration).
-<!-- END GENERATED: source-settings -->
-
-Each source loads its own settings class, so a deployment only needs the variables of
-the source it runs.
+Variables marked *slack*, *gmail* or *jira* are required only when `SOURCE` selects that
+source: each source loads its own settings class, so a deployment only needs the variables of the source it runs.
 The connector exits immediately with a clear message if a required variable is
 missing. Tokens and passwords are held as `SecretStr` and are never logged.
 
@@ -110,6 +106,10 @@ missing. Tokens and passwords are held as `SecretStr` and are never logged.
 Envelopes are deleted `RETENTION_DAYS` days after they were **posted**, 30 by default.
 Set `RETENTION_DAYS=0` to keep them forever. Deletion is enforced by an ArangoDB TTL
 index, and the same rule is applied to the dead-letter file.
+
+Because the window counts from creation, it suits sources whose items are not edited
+long after they are posted. Jira issues are, so the Jira Compose service runs with
+retention off; see [Jira retention](docs/sources/jira.md#retention).
 
 There are two modes, chosen with `RETENTION_MODE`. They mirror MongoDB's two kinds of
 TTL index.
@@ -209,9 +209,10 @@ page shows a full example and its payload fields.
   |---|---|---|---|
   | [slack](docs/sources/slack.md#document-shape) | team | channel | `[]` |
   | [gmail](docs/sources/gmail.md#document-shape) | mailbox domain | mailbox key | `[]` |
+  | [jira](docs/sources/jira.md#document-shape) | site host | project id | `[]` (issue), `[issue id]` (comment) |
 
 - `updated_at` is when the content last changed in the source (a Slack edit, a Gmail
-  label change), or `null`.
+  label change, a Jira issue's or comment's `updated`), or `null`.
 - `expires_at` is when retention deletes the document. It is `null` when retention is
   off or `RETENTION_MODE=age`.
 
@@ -220,6 +221,8 @@ page shows a full example and its payload fields.
 | `message` | `MessagePayload`: author, text, thread | Slack |
 | `email` | `EmailPayload`: subject, addresses, threading headers, labels, body | Gmail |
 | `attachment` | `AttachmentPayload`: filename, type, size, optional file and extracted text | Gmail (`GMAIL_ATTACHMENTS`) |
+| `issue` | `IssuePayload`: key, summary, description, status, type, people, labels, parent | Jira |
+| `comment` | `CommentPayload`: author, text, parent item, visibility | Jira |
 
 Persistent indexes are created on `[scope.container_id, created_at]`,
 `[source, scope.tenant_id, scope.container_id]` and `[kind]`.
@@ -306,12 +309,18 @@ src/arango_connector/
 │   │   ├── config.py  # SlackSettings
 │   │   ├── adapter.py # SlackSocketModeAdapter (Bolt, Socket Mode)
 │   │   └── normalize.py  # pure: Slack event → Envelope | None
-│   └── gmail/
-│       ├── config.py  # GmailSettings
-│       ├── auth.py    # credentials + arango-connector-gmail-auth (OAuth helper)
-│       ├── client.py  # GmailClient protocol + googleapiclient implementation
-│       ├── adapter.py # GmailPollingAdapter (history sync, cursors, label filter)
-│       └── normalize.py  # pure: Gmail message → Envelope | None
+│   ├── gmail/
+│   │   ├── config.py  # GmailSettings
+│   │   ├── auth.py    # credentials + arango-connector-gmail-auth (OAuth helper)
+│   │   ├── client.py  # GmailClient protocol + googleapiclient implementation
+│   │   ├── adapter.py # GmailPollingAdapter (history sync, cursors, label filter)
+│   │   └── normalize.py  # pure: Gmail message → Envelope | None
+│   └── jira/
+│       ├── config.py  # JiraSettings
+│       ├── client.py  # JiraClient protocol + requests implementation (retries, rate limits)
+│       ├── adapter.py # JiraPollingAdapter (JQL sync, per-project cursors, comments)
+│       ├── adf.py     # pure: Atlassian Document Format → plain text
+│       └── normalize.py  # pure: Jira issue / comment → Envelope | None
 └── sinks/
     ├── base.py        # Sink ABC
     └── arango.py      # ArangoSink
