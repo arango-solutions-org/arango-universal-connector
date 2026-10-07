@@ -315,5 +315,10 @@ Email holds personal and sensitive data. Beyond the read-only scope:
 
 Attachment content, sending or modifying mail, Pub/Sub push notifications, full mailbox
 backfill, removing messages that are deleted or moved out of watched labels, and batch
-fetching. See the `TODO(future)` comments in `sources/gmail/`. For non-Gmail providers,
+fetching.
+
+There is also no "ingest everything" option yet: `GMAIL_LABELS` needs at least one
+label, so archived mail (which loses `INBOX`) and mail with only other labels is
+skipped. Planned: `GMAIL_LABELS=*` for every message, with `GMAIL_EXCLUDE_LABELS` still
+applied. See the `TODO(future)` comments in `sources/gmail/`. For non-Gmail providers,
 see the planned IMAP source (SE-136).
