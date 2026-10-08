@@ -158,6 +158,7 @@ def test_wiki_build(tmp_path: Path) -> None:
             "Documentation.md",
             "Slack-source.md",
             "Gmail-source.md",
+            "Jira-source.md",
             "Source-page-template.md",
             "_Sidebar.md",
             "_Footer.md",

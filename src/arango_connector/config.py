@@ -7,6 +7,8 @@ deployment only needs the variables of the source it actually runs.
 
 from __future__ import annotations
 
+import re
+from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -20,6 +22,25 @@ def split_csv(value: Any) -> Any:
     """Split a comma-separated env value into a list. Use in ``mode="before"`` validators."""
     if isinstance(value, str):
         return [item.strip() for item in value.split(",") if item.strip()]
+    return value
+
+
+_DURATION_RE = re.compile(r"^\s*(\d+)\s*([smhd])\s*$", re.IGNORECASE)
+_DURATION_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
+
+
+def parse_duration(value: Any) -> Any:
+    """Accept ``"90m"``, ``"24h"``, ``"7d"``, ``"3600s"`` or a number of seconds.
+
+    Use in ``mode="before"`` validators; anything else is passed through unchanged.
+    """
+    if isinstance(value, str):
+        match = _DURATION_RE.match(value)
+        if match:
+            amount, unit = match.groups()
+            return timedelta(**{_DURATION_UNITS[unit.lower()]: int(amount)})
+        if value.strip().isdigit():
+            return timedelta(seconds=int(value))
     return value
 
 
