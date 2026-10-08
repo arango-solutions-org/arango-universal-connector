@@ -81,6 +81,41 @@ def message(
     }
 
 
+def attachment(
+    filename: str,
+    mime: str,
+    data: bytes,
+    *,
+    inline_data: bool = False,
+    inline: bool = False,
+    content_id: str | None = None,
+) -> dict[str, Any]:
+    """An attachment part. Large ones are fetched by attachmentId; small ones inline."""
+    headers = [
+        {"name": "Content-Type", "value": f'{mime}; name="{filename}"'},
+        {
+            "name": "Content-Disposition",
+            "value": f'{"inline" if inline else "attachment"}; filename="{filename}"',
+        },
+    ]
+    if content_id:
+        headers.append({"name": "Content-ID", "value": f"<{content_id}>"})
+    body: dict[str, Any] = {"size": len(data)}
+    if inline_data:
+        body["data"] = base64.urlsafe_b64encode(data).decode().rstrip("=")
+    else:
+        body["attachmentId"] = f"ANGjdJ-{filename}"
+    return {"partId": "", "mimeType": mime, "filename": filename, "headers": headers, "body": body}
+
+
+def with_part_ids(payload: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+    """Number parts the way Gmail does: "0", "1", nested "1.0", ..."""
+    for index, child in enumerate(payload.get("parts") or []):
+        child["partId"] = f"{prefix}{index}"
+        with_part_ids(child, f"{prefix}{index}.")
+    return payload
+
+
 class FakeGmailClient:
     """An in-memory mailbox implementing the GmailClient protocol.
 
@@ -105,6 +140,9 @@ class FakeGmailClient:
         self.fail_get: set[str] = set()
         self.queries: list[str] = []
         self.gets: list[str] = []
+        self.thread_gets: list[str] = []
+        self.attachments: dict[tuple[str, str], bytes] = {}
+        self.attachment_gets: list[tuple[str, str]] = []
 
     # -- mutations used by tests -------------------------------------------
 
@@ -163,6 +201,18 @@ class FakeGmailClient:
         for message_id, msg in self.messages.items():
             if int(msg["internalDate"]) > after_ms:
                 yield message_id
+
+    def get_attachment(self, message_id: str, attachment_id: str) -> bytes | None:
+        self.attachment_gets.append((message_id, attachment_id))
+        return self.attachments.get((message_id, attachment_id))
+
+    def get_thread_messages(self, thread_id: str) -> list[dict[str, Any]]:
+        self.thread_gets.append(thread_id)
+        return [
+            {"id": m["id"], "labelIds": list(m["labelIds"])}
+            for m in self.messages.values()
+            if m["threadId"] == thread_id
+        ]
 
     def get_message(self, message_id: str) -> dict[str, Any] | None:
         self.gets.append(message_id)

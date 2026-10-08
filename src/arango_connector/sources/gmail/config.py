@@ -16,6 +16,8 @@ AuthMode = Literal["service_account", "oauth"]
 InitialSync = Literal["now", "lookback"]
 KeyMode = Literal["hashed", "plain"]
 RawMode = Literal["full", "stripped", "none"]
+LabelMatch = Literal["thread", "message"]
+AttachmentMode = Literal["off", "metadata", "content", "text", "all"]
 
 _DURATION_RE = re.compile(r"^\s*(\d+)\s*([smhd])\s*$", re.IGNORECASE)
 _DURATION_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
@@ -50,6 +52,10 @@ class GmailSettings(ConnectorSettings):
         default_factory=lambda: ["SPAM", "TRASH", "DRAFT"]
     )
 
+    # thread: a message qualifies if any message in its thread carries a watched label
+    # (as Gmail's conversation view shows it). message: only its own labels count.
+    gmail_label_match: LabelMatch = "thread"
+
     gmail_poll_interval_seconds: float = Field(default=60, gt=0)
     gmail_initial_sync: InitialSync = "now"
     gmail_initial_lookback: timedelta = timedelta(hours=24)
@@ -58,6 +64,14 @@ class GmailSettings(ConnectorSettings):
     gmail_store_body: bool = True
     gmail_store_bcc: bool = True
     gmail_raw_mode: RawMode = "stripped"
+
+    # off: none. metadata: filename/type/size only. content: + base64 bytes and sha256.
+    # text: + extracted text, no bytes. all: content and text.
+    gmail_attachments: AttachmentMode = "off"
+    # Larger attachments are stored as metadata only (skipped_reason "too_large").
+    gmail_attachment_max_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
+    # Extracted text beyond this is cut off (text_truncated). 0 means no limit.
+    gmail_attachment_text_max_chars: int = Field(default=1_000_000, ge=0)
 
     @field_validator("gmail_mailboxes", mode="before")
     @classmethod
@@ -93,6 +107,15 @@ class GmailSettings(ConnectorSettings):
         if value <= timedelta(0):
             raise ValueError("must be positive, e.g. 24h or 7d")
         return value
+
+    @model_validator(mode="after")
+    def _check_redaction(self) -> GmailSettings:
+        if not self.gmail_store_body and self.gmail_attachments in ("content", "text", "all"):
+            raise ValueError(
+                f"GMAIL_ATTACHMENTS={self.gmail_attachments} would store message content "
+                "although GMAIL_STORE_BODY=false; use off or metadata"
+            )
+        return self
 
     @model_validator(mode="after")
     def _check_auth(self) -> GmailSettings:

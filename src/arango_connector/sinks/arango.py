@@ -158,9 +158,10 @@ class ArangoSink(Sink):
             field,
             self.retention.describe(),
         )
-        if self.retention.mode == "expiry":
+        if self.retention.mode == "expiry" and collection.count():
             # Deadlines are fixed at write time, so documents written under another
             # window, another mode or before schema v4 keep theirs (or have none).
+            # Nothing to say about an empty collection.
             logger.warning(
                 "arango_existing_expiry_unchanged collection=%s existing documents keep "
                 "their stored expires_at; run arango-connector-reconcile-expiry to apply "

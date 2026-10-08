@@ -6,7 +6,7 @@ writes one document per email, so new mail lands within about a minute.
 
 | | |
 |---|---|
-| Kind | `email` |
+| Kind | `email`, plus `attachment` when `GMAIL_ATTACHMENTS` is on |
 | Delivery | poll, incremental via Gmail `historyId` |
 | Keys | `gmail_{mailbox key}_{message id}`, deterministic, so a re-read overwrites |
 | Cursor | per mailbox in `connector_state`: `{history_id, last_synced_at}` |
@@ -150,7 +150,8 @@ The connector refuses to start if the key file, or any mailbox's token file, is 
 | `GMAIL_SERVICE_ACCOUNT_FILE` | required for `service_account` | JSON key with domain-wide delegation |
 | `GMAIL_OAUTH_TOKEN_DIR` | required for `oauth` | One `<mailbox>.json` per mailbox |
 | `GMAIL_LABELS` | `INBOX,SENT` | Ingest mail with **any** of these. Label IDs or names (names are resolved per mailbox, case-insensitive). The default captures both sides of conversations |
-| `GMAIL_EXCLUDE_LABELS` | `SPAM,TRASH,DRAFT` | ... and **none** of these |
+| `GMAIL_EXCLUDE_LABELS` | `SPAM,TRASH,DRAFT` | ... and **none** of these. Always checked on the message itself |
+| `GMAIL_LABEL_MATCH` | `thread` | `thread`: a message qualifies if **any message in its thread** carries a watched label, as Gmail's conversation view shows it, so replies come along. `message`: only the message's own labels count |
 | `GMAIL_POLL_INTERVAL_SECONDS` | `60` | |
 | `GMAIL_INITIAL_SYNC` | `now` | First start for a mailbox: `now` takes only new mail; `lookback` also takes recent mail |
 | `GMAIL_INITIAL_LOOKBACK` | `24h` | For `lookback`: e.g. `90m`, `24h`, `7d`. Bounded; this is not a full backfill |
@@ -158,9 +159,14 @@ The connector refuses to start if the key file, or any mailbox's token file, is 
 | `GMAIL_STORE_BODY` | `true` | `false` stores headers only: no `body_text`, no `snippet`, no body data in `raw` |
 | `GMAIL_STORE_BCC` | `true` | `false` drops Bcc from the payload and from `raw` headers |
 | `GMAIL_RAW_MODE` | `stripped` | `full` (the API message as-is), `stripped` (no base64 body data) or `none` |
+| `GMAIL_ATTACHMENTS` | `off` | `off`, `metadata` (filename, type, size; no downloads), `content` (+ the file as base64 and its SHA-256), `text` (+ extracted text, no file), `all` (file and text). See [Attachments](#attachments) |
+| `GMAIL_ATTACHMENT_MAX_BYTES` | `10485760` (10 MB) | Larger attachments are stored as metadata only, with `skipped_reason: "too_large"` |
+| `GMAIL_ATTACHMENT_TEXT_MAX_CHARS` | `1000000` | Extracted text beyond this is cut off (`text_truncated: true`); `0` for no limit |
 
 Redaction always wins over `GMAIL_RAW_MODE`: with `GMAIL_STORE_BODY=false` or
-`GMAIL_STORE_BCC=false`, even `full` raw omits that content.
+`GMAIL_STORE_BCC=false`, even `full` raw omits that content. `GMAIL_STORE_BODY=false`
+also only allows `GMAIL_ATTACHMENTS=off` or `metadata`; the connector refuses to start
+otherwise.
 
 ## Running
 
@@ -219,6 +225,15 @@ or changing their owner to that uid.
   gains a watched label later (for example, moved back to the inbox) is ingested then.
   A label change rewrites the stored document with the current `label_ids` and sets
   `updated_at`, so toggling read/unread rewrites it too.
+- **Threads.** Gmail shows labels per conversation but stores them per message, and a
+  reply arriving after you labelled a conversation does not get the label. With
+  `GMAIL_LABEL_MATCH=thread` (the default), a message also qualifies when another,
+  non-excluded message in its thread has a watched label, so replies and follow-ups
+  are ingested. Applying a watched label to one message also pulls in the rest of its
+  thread. A spam or trashed message is never ingested, and a labelled message in spam
+  does not qualify its thread. The thread check costs one small `threads.get` per
+  thread per poll, and only for messages that are not labelled themselves. Set
+  `GMAIL_LABEL_MATCH=message` to require each message's own label.
 - **What is not removed.** Mail that is deleted, trashed or moved out of watched labels
   stays stored until retention removes it, as with Slack deletes.
 - **History gaps.** Gmail keeps history for about a week. If the connector was down
@@ -271,7 +286,65 @@ or the address, per `GMAIL_KEY_MODE`), `path` = `[]`.
   converted to text. Encoded subjects and names (RFC 2047) are decoded.
 - `thread_id` is Gmail's thread. `message_id_header`, `in_reply_to` and `references`
   allow threading across mailboxes.
-- `label_ids` are Gmail label IDs (`INBOX`, `Label_123`, …), not names.
+- `label_ids` are Gmail label IDs (`INBOX`, `Label_123`, …), not names. They are the
+  message's own labels; in `thread` mode a message can be stored without a watched
+  label because its thread has one.
+
+## Attachments
+
+With `GMAIL_ATTACHMENTS` on, every part with a filename (attachments and inline images)
+becomes its own `kind: "attachment"` document in the same collection as the emails:
+
+```json
+{
+  "_key": "gmail_3f9a1c2b7d4e5f60_18c2a1b2c3d4e5f6_att_1",
+  "kind": "attachment",
+  "source_id": "18c2a1b2c3d4e5f6/1",
+  "scope": { "tenant_id": "example.com", "container_id": "3f9a1c2b7d4e5f60", "path": [] },
+  "created_at": "2024-05-23T21:33:20Z",
+  "payload": {
+    "kind": "attachment",
+    "message_id": "18c2a1b2c3d4e5f6",
+    "message_key": "gmail_3f9a1c2b7d4e5f60_18c2a1b2c3d4e5f6",
+    "thread_id": "18c2a1b2c3d4e5f6",
+    "part_id": "1",
+    "filename": "q2.pdf",
+    "mime_type": "application/pdf",
+    "size": 48213,
+    "inline": false,
+    "content_id": null,
+    "sha256": "9f2c…",
+    "content_base64": "JVBERi0xLjQK…",
+    "text": "Quarterly numbers …",
+    "text_truncated": false,
+    "skipped_reason": null
+  },
+  "raw": { "...": "the MIME part's headers and sizes, never its data" }
+}
+```
+
+- **Linking.** `payload.message_key` is the email document's `_key`:
+  `FOR a IN emails FILTER a.kind == "attachment" AND a.payload.message_key == @key RETURN a`.
+- **Keys** use the message ID and MIME part ID, which are stable. Gmail's own
+  attachment IDs change on every fetch.
+- **Text extraction** covers PDF, DOCX, HTML and text-like types (plain text, CSV, JSON,
+  XML, YAML, Markdown). A generic `application/octet-stream` falls back to the file
+  extension. Other types (images, archives, spreadsheets, and legacy Word 97-2003
+  `.doc`, which needs an external converter) are stored without text and with
+  `skipped_reason: "unsupported_type"`. Scanned PDFs without a text layer give
+  `no_text`, and password-protected ones give `encrypted`. The extractors live in
+  `arango_connector/extract.py`, shared by all sources.
+- **When files are downloaded.** Only when the email is ingested for the first time:
+  new mail, mail that just gained a watched label, or thread replies pulled in with it.
+  Read/unread and other label changes rewrite the email but don't re-download its
+  attachments. Mail stored before attachments were switched on gets them only if it is
+  re-ingested that way.
+- **Failures.** An attachment that disappeared is stored with `skipped_reason:
+  "download_failed"`. A transient API error fails that mailbox's sync, and the next
+  poll retries from the same cursor.
+- **Size and retention.** Base64 makes files about a third larger. ArangoDB is not a
+  blob store, so keep `GMAIL_ATTACHMENT_MAX_BYTES` modest. Attachments carry their
+  email's `created_at`, so they expire with it.
 
 ## Privacy and security
 
@@ -281,8 +354,10 @@ Email holds personal and sensitive data. Beyond the read-only scope:
   readers a dedicated ArangoDB user with access to that collection only.
 - `GMAIL_KEY_MODE=hashed` (the default) keeps mailbox addresses out of document keys,
   cursors and logs. The address is still present in the payload headers.
-- Use `GMAIL_STORE_BODY=false`, `GMAIL_STORE_BCC=false` and `GMAIL_RAW_MODE=none` for
-  metadata-only deployments.
+- Use `GMAIL_STORE_BODY=false`, `GMAIL_STORE_BCC=false`, `GMAIL_RAW_MODE=none` and
+  `GMAIL_ATTACHMENTS=off` (or `metadata`) for metadata-only deployments.
+- Attachments often hold the most sensitive data (contracts, IDs, payslips). Turn on
+  `content` or `text` deliberately, and restrict who can read the collection.
 - Retention applies as for any source; see [Retention](../../README.md#retention).
 - OAuth token files are written `0600`. Keep `secrets/` out of version control.
 
@@ -301,7 +376,11 @@ Email holds personal and sensitive data. Beyond the read-only scope:
 
 ## Not supported yet
 
-Attachment content, sending or modifying mail, Pub/Sub push notifications, full mailbox
-backfill, removing messages that are deleted or moved out of watched labels, and batch
-fetching. See the `TODO(future)` comments in `sources/gmail/`. For non-Gmail providers,
+Sending or modifying mail, Pub/Sub push notifications, full mailbox backfill, removing messages that are deleted or moved out of watched labels, and batch
+fetching.
+
+There is also no "ingest everything" option yet: `GMAIL_LABELS` needs at least one
+label, so archived mail (which loses `INBOX`) and mail with only other labels is
+skipped. Planned: `GMAIL_LABELS=*` for every message, with `GMAIL_EXCLUDE_LABELS` still
+applied. See the `TODO(future)` comments in `sources/gmail/`. For non-Gmail providers,
 see the planned IMAP source (SE-136).

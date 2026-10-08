@@ -331,3 +331,103 @@ def test_hashed_mode_keeps_the_address_out_of_keys_and_cursors() -> None:
     assert ADA not in env.key
     assert state.get(STATE_NAMESPACE, hashed) is not None
     assert state.get(STATE_NAMESPACE, ADA) is None
+
+
+# -- thread matching -------------------------------------------------------------------
+
+TEST = "Label_test"
+
+
+def _thread_adapter(gmail: FakeGmailClient, **kw: Any) -> GmailPollingAdapter:
+    adapter, _ = make_adapter({ADA: gmail}, include_labels=["test"], **kw)
+    poll(adapter)  # initialise the cursor
+    return adapter
+
+
+def _gmail() -> FakeGmailClient:
+    return FakeGmailClient(user_labels={TEST: "test"})
+
+
+def test_reply_in_a_labelled_thread_is_ingested_in_thread_mode() -> None:
+    gmail = _gmail()
+    adapter = _thread_adapter(gmail)
+    gmail.deliver(message("orig", labels=("INBOX", TEST)))
+    assert ids(poll(adapter)) == ["orig"]
+
+    gmail.deliver(message("reply", thread_id="orig", labels=("INBOX", "UNREAD")))
+    [env] = poll(adapter)
+
+    assert env.source_id == "reply"
+    assert env.payload.thread_id == "orig"
+    assert env.updated_at is None  # a new message, not a label change
+
+
+def test_reply_is_skipped_in_message_mode() -> None:
+    gmail = _gmail()
+    adapter = _thread_adapter(gmail, label_match="message")
+    gmail.deliver(message("orig", labels=("INBOX", TEST)))
+    gmail.deliver(message("reply", thread_id="orig", labels=("INBOX",)))
+
+    assert ids(poll(adapter)) == ["orig"]
+    assert gmail.thread_gets == []  # no thread lookups in message mode
+
+
+def test_excluded_reply_in_a_labelled_thread_is_still_skipped() -> None:
+    gmail = _gmail()
+    adapter = _thread_adapter(gmail)
+    gmail.deliver(message("orig", labels=("INBOX", TEST)))
+    gmail.deliver(message("spam-reply", thread_id="orig", labels=("SPAM",)))
+
+    assert ids(poll(adapter)) == ["orig"]
+
+
+def test_a_labelled_message_in_spam_does_not_qualify_its_thread() -> None:
+    gmail = _gmail()
+    adapter = _thread_adapter(gmail)
+    gmail.deliver(message("bait", labels=("SPAM", TEST)))
+    gmail.deliver(message("reply", thread_id="bait", labels=("INBOX",)))
+
+    assert poll(adapter) == []
+
+
+def test_labelling_one_message_pulls_in_its_whole_thread() -> None:
+    gmail = _gmail()
+    clock = Clock()
+    adapter = _thread_adapter(gmail, clock=clock)
+    gmail.deliver(message("first", labels=("INBOX",)))
+    gmail.deliver(message("second", thread_id="first", labels=("INBOX",)))
+    gmail.deliver(message("third", thread_id="first", labels=("SENT",)))
+    assert poll(adapter) == []
+    gmail.thread_gets.clear()
+
+    clock.now = NOW + timedelta(minutes=1)
+    gmail.relabel("third", add=(TEST,))
+    envs = poll(adapter)
+
+    assert sorted(ids(envs)) == ["first", "second", "third"]
+    assert all(e.updated_at == clock.now for e in envs)
+    assert gmail.thread_gets == ["first"]  # one lookup for the thread, cached for the poll
+
+
+def test_read_toggle_on_a_labelled_message_does_not_re_read_the_thread() -> None:
+    gmail = _gmail()
+    adapter = _thread_adapter(gmail)
+    gmail.deliver(message("orig", labels=("INBOX", "UNREAD", TEST)))
+    gmail.deliver(message("reply", thread_id="orig", labels=("INBOX",)))
+    poll(adapter)
+    gmail.gets.clear()
+
+    gmail.relabel("orig", remove=("UNREAD",))
+
+    assert ids(poll(adapter)) == ["orig"]
+    assert gmail.gets == ["orig"]
+
+
+def test_unlabelled_threads_are_looked_up_once_per_poll() -> None:
+    gmail = _gmail()
+    adapter = _thread_adapter(gmail)
+    gmail.deliver(message("a", labels=("INBOX",)))
+    gmail.deliver(message("b", thread_id="a", labels=("INBOX",)))
+
+    assert poll(adapter) == []
+    assert gmail.thread_gets == ["a"]

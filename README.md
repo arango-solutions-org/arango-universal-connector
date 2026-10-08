@@ -23,7 +23,7 @@ privacy notes and troubleshooting.
 | Source | `SOURCE=` | Kind | Delivery | Setup and reference |
 |---|---|---|---|---|
 | Slack | `slack` | `message` | push (Socket Mode) | [docs/sources/slack.md](docs/sources/slack.md) |
-| Gmail | `gmail` | `email` | poll (Gmail history API) | [docs/sources/gmail.md](docs/sources/gmail.md) |
+| Gmail | `gmail` | `email`, `attachment` | poll (Gmail history API) | [docs/sources/gmail.md](docs/sources/gmail.md) |
 
 ## What it does
 
@@ -212,6 +212,7 @@ page shows a full example and its payload fields.
 |---|---|---|
 | `message` | `MessagePayload`: author, text, thread | Slack |
 | `email` | `EmailPayload`: subject, addresses, threading headers, labels, body | Gmail |
+| `attachment` | `AttachmentPayload`: filename, type, size, optional file and extracted text | Gmail (`GMAIL_ATTACHMENTS`) |
 
 Persistent indexes are created on `[scope.container_id, created_at]`,
 `[source, scope.tenant_id, scope.container_id]` and `[kind]`.
@@ -275,6 +276,7 @@ src/arango_connector/
 ├── config.py          # CoreSettings, shared settings base and load_settings()
 ├── envelope.py        # source-agnostic Envelope, Scope, make_key()
 ├── payloads.py        # typed payloads per entity kind (MessagePayload, ...)
+├── extract.py         # text from files (PDF, DOCX, HTML, text), shared by sources
 ├── pipeline.py        # source → sink, retention stamping, dead-lettering
 ├── retention.py       # RetentionPolicy: expiry / age modes
 ├── maintenance.py     # arango-connector-reconcile-expiry (operator command)
