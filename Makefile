@@ -20,7 +20,8 @@ TEST_DB_URL := http://localhost:$(TEST_DB_PORT)
 TEST_DB_ENV := ARANGO_HOSTS=$(TEST_DB_URL) ARANGO_PASSWORD=$(TEST_DB_PASSWORD) ARANGO_USERNAME=root
 
 .PHONY: help install lint format format-check typecheck test test-integration test-all check \
-	test-db-up test-db-down run build up down logs reconcile-expiry gmail-auth clean
+	test-db-up test-db-down run build up down logs reconcile-expiry gmail-auth clean \
+	docs-gen docs-check wiki-build
 
 help: ## Show this help
 	@echo "Usage: make <target> [VAR=value]"
@@ -55,7 +56,19 @@ test-integration: test-db-up ## Run integration tests against a disposable Arang
 
 test-all: test test-integration ## Run unit and integration tests
 
-check: lint format-check typecheck test ## Everything CI should pass (no database needed)
+check: lint format-check typecheck docs-check test ## Everything CI should pass (no database needed)
+
+# -- docs -----------------------------------------------------------------
+
+docs-gen: ## Regenerate config tables and the source catalogue in the docs from code
+	uv run python -m arango_connector.doctools gen
+
+docs-check: ## Fail on stale generated docs, .env.example gaps or broken links
+	uv run python -m arango_connector.doctools check
+
+wiki-build: ## Render the docs as GitHub wiki pages into build/wiki (what CI publishes)
+	rm -rf build/wiki
+	uv run python -m arango_connector.doctools wiki build/wiki --sha "$$(git rev-parse HEAD)"
 
 # -- disposable test database ---------------------------------------------
 

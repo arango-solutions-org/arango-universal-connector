@@ -10,6 +10,7 @@ TODO(future): discover additional sources/sinks via package entry points.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from arango_connector.config import CoreSettings, load_settings
 from arango_connector.sinks.base import Sink
@@ -17,6 +18,22 @@ from arango_connector.sources.base import SourceAdapter
 from arango_connector.state.base import StateStore
 
 SourceFactory = Callable[[CoreSettings, StateStore], SourceAdapter]
+
+
+@dataclass(frozen=True)
+class SourceInfo:
+    """What a source is, for docs and tooling. Every entry in ``SOURCES`` has one."""
+
+    title: str
+    summary: str
+    kinds: tuple[str, ...]
+    delivery: str
+    # "module:Class" of its settings class, imported only when docs are generated.
+    settings: str
+    # Its page under docs/sources/.
+    doc: str
+
+
 SinkFactory = Callable[[CoreSettings], Sink]
 
 
@@ -114,6 +131,26 @@ def build_state_store(settings: CoreSettings) -> StateStore:
 SOURCES: dict[str, SourceFactory] = {
     "slack": build_slack_adapter,
     "gmail": build_gmail_adapter,
+}
+
+SOURCE_INFO: dict[str, SourceInfo] = {
+    "slack": SourceInfo(
+        title="Slack",
+        summary="Messages, thread replies and edits from allowlisted channels, in real time.",
+        kinds=("message",),
+        delivery="push (Socket Mode)",
+        settings="arango_connector.sources.slack.config:SlackSettings",
+        doc="slack.md",
+    ),
+    "gmail": SourceInfo(
+        title="Gmail",
+        summary="Email from selected mailboxes and labels, incrementally, with optional "
+        "attachments and text extraction.",
+        kinds=("email", "attachment"),
+        delivery="poll (Gmail history API)",
+        settings="arango_connector.sources.gmail.config:GmailSettings",
+        doc="gmail.md",
+    ),
 }
 
 SINKS: dict[str, SinkFactory] = {

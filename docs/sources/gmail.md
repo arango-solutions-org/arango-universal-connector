@@ -143,25 +143,27 @@ The connector refuses to start if the key file, or any mailbox's token file, is 
 
 ## Configuration
 
-| Variable | Default | Notes |
-|---|---|---|
-| `GMAIL_MAILBOXES` | required | Comma-separated addresses |
-| `GMAIL_AUTH_MODE` | `service_account` | or `oauth` |
-| `GMAIL_SERVICE_ACCOUNT_FILE` | required for `service_account` | JSON key with domain-wide delegation |
-| `GMAIL_OAUTH_TOKEN_DIR` | required for `oauth` | One `<mailbox>.json` per mailbox |
-| `GMAIL_LABELS` | `INBOX,SENT` | Ingest mail with **any** of these. Label IDs or names (names are resolved per mailbox, case-insensitive). The default captures both sides of conversations |
-| `GMAIL_EXCLUDE_LABELS` | `SPAM,TRASH,DRAFT` | ... and **none** of these. Always checked on the message itself |
-| `GMAIL_LABEL_MATCH` | `thread` | `thread`: a message qualifies if **any message in its thread** carries a watched label, as Gmail's conversation view shows it, so replies come along. `message`: only the message's own labels count |
-| `GMAIL_POLL_INTERVAL_SECONDS` | `60` | |
-| `GMAIL_INITIAL_SYNC` | `now` | First start for a mailbox: `now` takes only new mail; `lookback` also takes recent mail |
-| `GMAIL_INITIAL_LOOKBACK` | `24h` | For `lookback`: e.g. `90m`, `24h`, `7d`. Bounded; this is not a full backfill |
-| `GMAIL_KEY_MODE` | `hashed` | `hashed`: keys, `scope.container_id`, cursors and logs use a 16-character SHA-256 of the address. `plain`: the address itself |
-| `GMAIL_STORE_BODY` | `true` | `false` stores headers only: no `body_text`, no `snippet`, no body data in `raw` |
-| `GMAIL_STORE_BCC` | `true` | `false` drops Bcc from the payload and from `raw` headers |
-| `GMAIL_RAW_MODE` | `stripped` | `full` (the API message as-is), `stripped` (no base64 body data) or `none` |
-| `GMAIL_ATTACHMENTS` | `off` | `off`, `metadata` (filename, type, size; no downloads), `content` (+ the file as base64 and its SHA-256), `text` (+ extracted text, no file), `all` (file and text). See [Attachments](#attachments) |
-| `GMAIL_ATTACHMENT_MAX_BYTES` | `10485760` (10 MB) | Larger attachments are stored as metadata only, with `skipped_reason: "too_large"` |
-| `GMAIL_ATTACHMENT_TEXT_MAX_CHARS` | `1000000` | Extracted text beyond this is cut off (`text_truncated: true`); `0` for no limit |
+<!-- BEGIN GENERATED: config:gmail -->
+| Variable | Default | Values | Description |
+|---|---|---|---|
+| `GMAIL_AUTH_MODE` | `service_account` | `service_account` \| `oauth` | `service_account` (Workspace, domain-wide delegation) or `oauth` (per-mailbox tokens). |
+| `GMAIL_SERVICE_ACCOUNT_FILE` | — | path | Service account JSON key with domain-wide delegation. Required for `service_account`. |
+| `GMAIL_OAUTH_TOKEN_DIR` | — | path | Directory of `<mailbox>.json` token files from `arango-connector-gmail-auth`. Required for `oauth`. |
+| `GMAIL_MAILBOXES` | **required** | comma-separated | Mailboxes to read, comma-separated. |
+| `GMAIL_LABELS` | `INBOX,SENT` | comma-separated | Ingest mail carrying **any** of these labels (IDs or names, resolved per mailbox). The default captures both sides of conversations. |
+| `GMAIL_EXCLUDE_LABELS` | `SPAM,TRASH,DRAFT` | comma-separated | ... and **none** of these. Always checked on the message itself. |
+| `GMAIL_LABEL_MATCH` | `thread` | `thread` \| `message` | `thread`: a message qualifies if any message in its thread carries a watched label, as Gmail's conversation view shows it, so replies come along. `message`: only its own labels count. |
+| `GMAIL_POLL_INTERVAL_SECONDS` | `60` | number > 0 | Seconds between polls. |
+| `GMAIL_INITIAL_SYNC` | `now` | `now` \| `lookback` | First start for a mailbox: `now` takes only new mail; `lookback` also takes mail from the last `GMAIL_INITIAL_LOOKBACK`. |
+| `GMAIL_INITIAL_LOOKBACK` | `24h` | duration | For `lookback`: e.g. `90m`, `24h`, `7d`. Bounded; not a full backfill. |
+| `GMAIL_KEY_MODE` | `hashed` | `hashed` \| `plain` | `hashed`: keys, `scope.container_id`, cursors and logs use a 16-character SHA-256 of the address. `plain`: the address itself. |
+| `GMAIL_STORE_BODY` | `true` | `true` \| `false` | `false` stores headers only: no `body_text`, no `snippet`, no body data in `raw`, and attachments limited to `off` or `metadata`. |
+| `GMAIL_STORE_BCC` | `true` | `true` \| `false` | `false` drops Bcc from the payload and from `raw` headers. |
+| `GMAIL_RAW_MODE` | `stripped` | `full` \| `stripped` \| `none` | `full` (the API message as-is), `stripped` (no base64 body data) or `none`. |
+| `GMAIL_ATTACHMENTS` | `off` | `off` \| `metadata` \| `content` \| `text` \| `all` | `off`; `metadata` (filename, type, size; no downloads); `content` (+ file as base64 and sha256); `text` (+ extracted text, no file); `all`. |
+| `GMAIL_ATTACHMENT_MAX_BYTES` | `10485760` | integer > 0 | Larger attachments are stored as metadata only (`skipped_reason: "too_large"`). |
+| `GMAIL_ATTACHMENT_TEXT_MAX_CHARS` | `1000000` | integer ≥ 0 | Extracted text beyond this is cut off (`text_truncated`). `0` means no limit. |
+<!-- END GENERATED: config:gmail -->
 
 Redaction always wins over `GMAIL_RAW_MODE`: with `GMAIL_STORE_BODY=false` or
 `GMAIL_STORE_BCC=false`, even `full` raw omits that content. `GMAIL_STORE_BODY=false`

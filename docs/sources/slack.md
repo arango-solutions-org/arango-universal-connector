@@ -29,11 +29,13 @@ and writes every new message, thread reply and edit to ArangoDB within seconds.
 
 ## Configuration
 
-| Variable | Default | Notes |
-|---|---|---|
-| `SLACK_BOT_TOKEN` | required | `xoxb-…` |
-| `SLACK_APP_TOKEN` | required | `xapp-…`, needs `connections:write` |
-| `SLACK_CHANNEL_IDS` | required | Comma-separated, e.g. `C012,C034` |
+<!-- BEGIN GENERATED: config:slack -->
+| Variable | Default | Values | Description |
+|---|---|---|---|
+| `SLACK_BOT_TOKEN` | **required** | secret | Bot User OAuth Token (`xoxb-…`). |
+| `SLACK_APP_TOKEN` | **required** | secret | App-level token (`xapp-…`) with the `connections:write` scope. |
+| `SLACK_CHANNEL_IDS` | **required** | comma-separated | Channel IDs to watch, comma-separated, e.g. `C012,C034`. |
+<!-- END GENERATED: config:slack -->
 
 Messages go to `ARANGO_COLLECTION` (default `messages`).
 

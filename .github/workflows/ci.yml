@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, types, docs, unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      # ruff, ruff format, mypy, docs-check (generated docs, .env.example, links), pytest
+      - run: make check
+
+  integration:
+    name: Integration tests (ArangoDB)
+    runs-on: ubuntu-latest
+    services:
+      arangodb:
+        image: arangodb:3.12
+        env:
+          ARANGO_ROOT_PASSWORD: ci-password
+        ports:
+          - 8529:8529
+        options: >-
+          --health-cmd "wget -q -O /dev/null http://127.0.0.1:8529/_admin/server/availability || exit 1"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      ARANGO_HOSTS: http://localhost:8529
+      ARANGO_USERNAME: root
+      ARANGO_PASSWORD: ci-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run pytest -m integration
