@@ -20,11 +20,13 @@ Jira (JQL search) ────► JiraPollingAdapter ─────► normaliz
 Each source has a page with setup, configuration, how sync works, its document shape,
 privacy notes and troubleshooting.
 
-| Source | `SOURCE=` | Kind | Delivery | Setup and reference |
-|---|---|---|---|---|
-| Slack | `slack` | `message` | push (Socket Mode) | [docs/sources/slack.md](docs/sources/slack.md) |
-| Gmail | `gmail` | `email` | poll (Gmail history API) | [docs/sources/gmail.md](docs/sources/gmail.md) |
-| Jira Cloud | `jira` | `issue`, `comment` | poll (incremental JQL) | [docs/sources/jira.md](docs/sources/jira.md) |
+<!-- BEGIN GENERATED: catalogue -->
+| Source | `SOURCE=` | Kinds | Delivery | What it ingests | Docs |
+|---|---|---|---|---|---|
+| Slack | `slack` | `message` | push (Socket Mode) | Messages, thread replies and edits from allowlisted channels, in real time. | [Slack docs](docs/sources/slack.md) |
+| Gmail | `gmail` | `email`, `attachment` | poll (Gmail history API) | Email from selected mailboxes and labels, incrementally, with optional attachments and text extraction. | [Gmail docs](docs/sources/gmail.md) |
+| Jira | `jira` | `issue`, `comment` | poll (incremental JQL) | Issues and comments from selected Jira Cloud projects, incrementally. | [Jira docs](docs/sources/jira.md) |
+<!-- END GENERATED: catalogue -->
 
 ## What it does
 
@@ -72,27 +74,32 @@ To run the connector outside Docker: `docker compose up -d arangodb`, then
 
 All settings come from environment variables or `.env`.
 
-| Variable            | Required | Default                 | Notes                                    |
-|---------------------|----------|-------------------------|------------------------------------------|
-| `SOURCE`            | no       | `slack`                 | Source adapter name (see `registry.py`)  |
-| `SINK`              | no       | `arango`                | Sink name (see `registry.py`)            |
-| `SLACK_*`           | slack    |                         | See [Slack configuration](docs/sources/slack.md#configuration) |
-| `GMAIL_*`           | gmail    |                         | See [Gmail configuration](docs/sources/gmail.md#configuration) |
-| `JIRA_*`            | jira     |                         | See [Jira configuration](docs/sources/jira.md#configuration) |
-| `ARANGO_HOSTS`      | no       | `http://localhost:8529` | Comma-separated for multiple coordinators |
-| `ARANGO_USERNAME`   | no       | `root`                  |                                          |
-| `ARANGO_PASSWORD`   | yes      | —                       | Also the ArangoDB root password in Compose |
-| `ARANGO_DB`         | no       | `connector`             |                                          |
-| `ARANGO_COLLECTION` | no       | `messages`              |                                          |
-| `STATE_COLLECTION`  | no       | `connector_state`       | Source sync cursors; never expired       |
-| `RETENTION_DAYS`    | no       | `30`                    | Delete envelopes this many days after they were posted, in ArangoDB and the dead-letter file; `0` disables |
-| `RETENTION_MODE`    | no       | `expiry`                | `expiry` (per-document deadline) or `age`. See [Retention](#retention) |
-| `RETENTION_AGE_FIELD` | no     | `created_at`            | `age` mode only: `created_at` or `ingested_at` |
-| `DEAD_LETTER_PATH`  | no       | `./dead_letter.jsonl`   | `/data/dead_letter.jsonl` in Docker      |
-| `LOG_LEVEL`         | no       | `INFO`                  |                                          |
+<!-- BEGIN GENERATED: config:core -->
+| Variable | Default | Values | Description |
+|---|---|---|---|
+| `SOURCE` | `slack` | text | Source adapter to run (one source per process). |
+| `SINK` | `arango` | text | Sink to write to. |
+| `ARANGO_HOSTS` | `http://localhost:8529` | comma-separated | ArangoDB endpoint(s), comma-separated for multiple coordinators. |
+| `ARANGO_USERNAME` | `root` | text | ArangoDB user. |
+| `ARANGO_PASSWORD` | **required** | secret | ArangoDB password. Also the root password of the Compose ArangoDB. |
+| `ARANGO_DB` | `connector` | text | Database, created on first start if missing. |
+| `ARANGO_COLLECTION` | `messages` | text | Collection envelopes are written to. |
+| `STATE_COLLECTION` | `connector_state` | text | Collection holding source sync cursors (e.g. Gmail historyId). Never subject to retention. |
+| `RETENTION_DAYS` | `30` | integer ≥ 0 | Delete envelopes this many days after they were posted, in ArangoDB and the dead-letter file. `0` disables retention. |
+| `RETENTION_MODE` | `expiry` | `expiry` \| `age` | `expiry`: each document stores its own `expires_at`, fixed at write time. `age`: documents expire `RETENTION_DAYS` after `RETENTION_AGE_FIELD`. |
+| `RETENTION_AGE_FIELD` | `created_at` | `created_at` \| `ingested_at` | `age` mode only: the date retention counts from. |
+| `DEAD_LETTER_PATH` | `./dead_letter.jsonl` | path | JSONL file for envelopes that still fail after retries (`/data/dead_letter.jsonl` in Docker). |
+| `LOG_LEVEL` | `INFO` | text | Python log level. |
+<!-- END GENERATED: config:core -->
 
-Variables marked *slack*, *gmail* or *jira* are required only when `SOURCE` selects that
-source: each source loads its own settings class, so a deployment only needs the variables of the source it runs.
+<!-- BEGIN GENERATED: source-settings -->
+- `SLACK_*`: required only when `SOURCE=slack`. See [Slack configuration](docs/sources/slack.md#configuration).
+- `GMAIL_*`: required only when `SOURCE=gmail`. See [Gmail configuration](docs/sources/gmail.md#configuration).
+- `JIRA_*`: required only when `SOURCE=jira`. See [Jira configuration](docs/sources/jira.md#configuration).
+<!-- END GENERATED: source-settings -->
+
+Each source loads its own settings class, so a deployment only needs the variables of
+the source it runs.
 The connector exits immediately with a clear message if a required variable is
 missing. Tokens and passwords are held as `SecretStr` and are never logged.
 

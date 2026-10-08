@@ -3,14 +3,14 @@
 `SOURCE=jira`. Polls each Jira Cloud project in `JIRA_PROJECTS` every
 `JIRA_POLL_INTERVAL_SECONDS` (60 by default) with an incremental JQL search, and writes
 one document per issue and one per comment. New issues, edits and comments land within
-about two minutes.
+about one poll interval, a minute by default.
 
 | | |
 |---|---|
 | Kind | `issue` and `comment` |
 | Delivery | poll, incremental via JQL `updated >= <cursor>` |
 | Keys | `jira_{site}_issue_{issue id}` and `jira_{site}_comment_{comment id}`, deterministic, so a re-read overwrites |
-| Cursor | per project in `connector_state`: `{updated_since, last_synced_at}` |
+| Cursor | per project in `connector_state`: `{updated_since, last_synced_at}`, plus `initial: true` while a first sync is unfinished |
 | Access | an API token for one Atlassian account; the connector only reads (`GET` and the read-only JQL search `POST`) |
 
 ## Setup
@@ -41,16 +41,23 @@ Put the site URL, the account's email, the token and the project keys in `.env`.
 
 ## Configuration
 
-| Variable | Default | Notes |
-|---|---|---|
-| `JIRA_BASE_URL` | required | `https://your-site.atlassian.net`. Must be https; any path is dropped |
-| `JIRA_EMAIL` | required | The account the token belongs to |
-| `JIRA_API_TOKEN` | required | Held as a secret; never logged |
-| `JIRA_PROJECTS` | required | Comma-separated project keys, e.g. `PROJ,OPS` (case-insensitive) |
-| `JIRA_POLL_INTERVAL_SECONDS` | `60` | Keep at or below `240` to meet a five-minute freshness target |
-| `JIRA_INITIAL_SYNC` | `lookback` | First start per project: `now` (only later changes), `lookback` (issues updated within `JIRA_INITIAL_LOOKBACK`) or `all` (every issue) |
-| `JIRA_INITIAL_LOOKBACK` | `30d` | For `lookback`: e.g. `12h`, `30d`, `365d` |
-| `JIRA_PAGE_SIZE` | `100` | Issues per search request, 1–100 |
+<!-- BEGIN GENERATED: config:jira -->
+| Variable | Default | Values | Description |
+|---|---|---|---|
+| `JIRA_BASE_URL` | **required** | text | The Jira Cloud site, e.g. `https://your-site.atlassian.net`. Must be https; any path is dropped. |
+| `JIRA_EMAIL` | **required** | text | Email of the Atlassian account the API token belongs to. |
+| `JIRA_API_TOKEN` | **required** | secret | API token for that account, from id.atlassian.com. Never logged. |
+| `JIRA_PROJECTS` | **required** | comma-separated | Project keys to sync, comma-separated, e.g. `PROJ,OPS` (case-insensitive). |
+| `JIRA_POLL_INTERVAL_SECONDS` | `60` | number > 0 | Seconds between polls. A change in Jira is picked up by the next poll. |
+| `JIRA_INITIAL_SYNC` | `lookback` | `now` \| `lookback` \| `all` | First start for a project: `now` takes only later changes; `lookback` also takes issues updated in the last `JIRA_INITIAL_LOOKBACK`; `all` takes every issue in the project. |
+| `JIRA_INITIAL_LOOKBACK` | `30d` | duration | For `lookback`: e.g. `12h`, `30d`, `365d`. |
+| `JIRA_PAGE_SIZE` | `100` | integer ≥ 1 | Issues per search request, at most 100. |
+<!-- END GENERATED: config:jira -->
+
+`JIRA_BASE_URL` must be https, `JIRA_EMAIL` an address and each `JIRA_PROJECTS` entry a
+valid project key; the connector refuses to start otherwise. A change reaches ArangoDB
+within about one poll interval, so keep `JIRA_POLL_INTERVAL_SECONDS` well under `300` to
+meet a five-minute freshness target.
 
 Compose-only (the `connector-jira` service):
 
@@ -123,9 +130,10 @@ docker compose --profile jira up -d --build
   [Not supported yet](#not-supported-yet)). An issue moved to an unwatched project
   stays as last seen; moved to a watched one, it keeps its key and its `scope` and
   `issue_key` follow the move.
-- **Rate limits and failures.** 429 and 5xx responses and connection errors are retried
-  up to five times per request, waiting `Retry-After` when Jira sends it (capped at 60s)
-  and an exponential backoff with jitter otherwise; each wait logs `jira_request_retry`.
+- **Rate limits and failures.** 429 and 5xx responses and connection errors are retried,
+  with up to five attempts per request, waiting `Retry-After` when Jira sends it (capped
+  at 60s) and an exponential backoff with jitter otherwise; each wait logs
+  `jira_request_retry`.
   A project that still fails is logged as `jira_project_sync_failed` and retried on the
   next poll without holding up the others. If every project fails, polling backs off
   exponentially, up to 5 minutes. A shutdown cuts a retry wait short and keeps the last
@@ -183,12 +191,15 @@ A comment:
 ```json
 {
   "_key": "jira_acme.atlassian.net_comment_20001",
+  "schema_version": 4,
   "source": "jira",
   "kind": "comment",
   "source_id": "20001",
   "scope": { "tenant_id": "acme.atlassian.net", "container_id": "10000", "path": ["10001"] },
   "created_at": "2024-05-24T09:12:05.481000Z",
   "updated_at": "2024-05-24T09:12:05.481000Z",
+  "ingested_at": "2024-05-24T09:13:01.212000Z",
+  "expires_at": null,
   "payload": {
     "kind": "comment",
     "author_id": "5b10a2844c20165700ede21g",

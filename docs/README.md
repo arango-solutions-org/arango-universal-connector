@@ -6,11 +6,13 @@ configuration, how sync works, its document shape, privacy and troubleshooting.
 
 ## Sources
 
-| Source | `SOURCE=` | Kind | Delivery | Page |
-|---|---|---|---|---|
-| Slack | `slack` | `message` | push (Socket Mode) | [sources/slack.md](sources/slack.md) |
-| Gmail | `gmail` | `email`, `attachment` | poll (Gmail history API) | Email from selected mailboxes and labels, incrementally, with optional attachments and text extraction. | [Gmail docs](sources/gmail.md) | poll (Gmail history API) | [sources/gmail.md](sources/gmail.md) |
-| Jira Cloud | `jira` | `issue`, `comment` | poll (incremental JQL) | [sources/jira.md](sources/jira.md) |
+<!-- BEGIN GENERATED: catalogue -->
+| Source | `SOURCE=` | Kinds | Delivery | What it ingests | Docs |
+|---|---|---|---|---|---|
+| Slack | `slack` | `message` | push (Socket Mode) | Messages, thread replies and edits from allowlisted channels, in real time. | [Slack docs](sources/slack.md) |
+| Gmail | `gmail` | `email`, `attachment` | poll (Gmail history API) | Email from selected mailboxes and labels, incrementally, with optional attachments and text extraction. | [Gmail docs](sources/gmail.md) |
+| Jira | `jira` | `issue`, `comment` | poll (incremental JQL) | Issues and comments from selected Jira Cloud projects, incrementally. | [Jira docs](sources/jira.md) |
+<!-- END GENERATED: catalogue -->
 
 ## Adding a source
 

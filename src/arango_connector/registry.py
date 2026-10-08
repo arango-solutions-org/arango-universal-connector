@@ -181,6 +181,14 @@ SOURCE_INFO: dict[str, SourceInfo] = {
         settings="arango_connector.sources.gmail.config:GmailSettings",
         doc="gmail.md",
     ),
+    "jira": SourceInfo(
+        title="Jira",
+        summary="Issues and comments from selected Jira Cloud projects, incrementally.",
+        kinds=("issue", "comment"),
+        delivery="poll (incremental JQL)",
+        settings="arango_connector.sources.jira.config:JiraSettings",
+        doc="jira.md",
+    ),
 }
 
 SINKS: dict[str, SinkFactory] = {

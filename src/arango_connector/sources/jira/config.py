@@ -19,18 +19,40 @@ _PROJECT_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]+$")
 
 
 class JiraSettings(ConnectorSettings):
-    # The site, e.g. https://acme.atlassian.net. Anything after the host is dropped.
-    jira_base_url: str
-    # The Atlassian account the API token belongs to.
-    jira_email: str
-    jira_api_token: SecretStr
-    jira_projects: Annotated[list[str], NoDecode, Field(min_length=1)]
+    jira_base_url: str = Field(
+        description="The Jira Cloud site, e.g. `https://your-site.atlassian.net`. Must be "
+        "https; any path is dropped.",
+    )
+    jira_email: str = Field(description="Email of the Atlassian account the API token belongs to.")
+    jira_api_token: SecretStr = Field(
+        description="API token for that account, from id.atlassian.com. Never logged."
+    )
+    jira_projects: Annotated[list[str], NoDecode] = Field(
+        min_length=1,
+        description="Project keys to sync, comma-separated, e.g. `PROJ,OPS` (case-insensitive).",
+    )
 
-    jira_poll_interval_seconds: float = Field(default=60, gt=0)
-    jira_initial_sync: InitialSync = "lookback"
-    jira_initial_lookback: timedelta = timedelta(days=30)
-    # Issues per search page. Jira caps it at 100 when fields are requested.
-    jira_page_size: int = Field(default=100, ge=1, le=100)
+    jira_poll_interval_seconds: float = Field(
+        default=60,
+        gt=0,
+        description="Seconds between polls. A change in Jira is picked up by the next poll.",
+    )
+    jira_initial_sync: InitialSync = Field(
+        default="lookback",
+        description="First start for a project: `now` takes only later changes; `lookback` "
+        "also takes issues updated in the last `JIRA_INITIAL_LOOKBACK`; `all` takes every "
+        "issue in the project.",
+    )
+    jira_initial_lookback: timedelta = Field(
+        default=timedelta(days=30),
+        description="For `lookback`: e.g. `12h`, `30d`, `365d`.",
+    )
+    jira_page_size: int = Field(
+        default=100,
+        ge=1,
+        le=100,
+        description="Issues per search request, at most 100.",
+    )
 
     @field_validator("jira_base_url")
     @classmethod
