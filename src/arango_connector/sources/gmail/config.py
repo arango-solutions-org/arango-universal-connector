@@ -19,6 +19,11 @@ LabelMatch = Literal["thread", "message"]
 AttachmentMode = Literal["off", "metadata", "content", "text", "all"]
 
 
+def token_path(token_dir: Path, mailbox: str) -> Path:
+    """Where ``arango-connector-gmail-auth`` saves a mailbox's OAuth token."""
+    return token_dir / f"{mailbox.lower()}.json"
+
+
 class GmailSettings(ConnectorSettings):
     gmail_auth_mode: AuthMode = Field(
         default="service_account",
@@ -160,7 +165,7 @@ class GmailSettings(ConnectorSettings):
             token_dir = self.gmail_oauth_token_dir
             if token_dir is None:
                 raise ValueError("GMAIL_OAUTH_TOKEN_DIR is required for oauth")
-            missing = [m for m in self.gmail_mailboxes if not (token_dir / f"{m}.json").is_file()]
+            missing = [m for m in self.gmail_mailboxes if not token_path(token_dir, m).is_file()]
             if missing:
                 raise ValueError(
                     f"no token file in GMAIL_OAUTH_TOKEN_DIR for: {', '.join(missing)} "

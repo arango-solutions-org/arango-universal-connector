@@ -148,11 +148,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     configure_logging(settings.log_level)
 
-    hosts = settings.arango_hosts
     client = None
     try:
         client, db = connect(
-            hosts[0] if len(hosts) == 1 else hosts,
+            settings.arango_hosts,
             settings.arango_username,
             settings.arango_password.get_secret_value(),
             settings.arango_db,

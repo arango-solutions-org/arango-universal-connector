@@ -102,6 +102,12 @@ def test_retention_age_mode_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def test_retention_days_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RETENTION_DAYS", "36501")
+    with pytest.raises(ConfigError, match="RETENTION_DAYS"):
+        load_settings(CoreSettings)
+
+
 def test_invalid_retention_mode_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RETENTION_MODE", "forever")
     with pytest.raises(ConfigError, match="RETENTION_MODE"):

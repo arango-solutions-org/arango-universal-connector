@@ -34,10 +34,6 @@ OVERLAP = timedelta(minutes=2)
 ClientFactory = Callable[[Callable[[], bool]], JiraClient]
 
 
-class _Stopping(Exception):
-    """Raised mid-sync when the adapter is stopping; the last checkpoint stands."""
-
-
 @dataclass
 class _Window:
     """What one sync of a project reads."""
@@ -106,7 +102,7 @@ class JiraPollingAdapter(PollingSourceAdapter):
                 return
             try:
                 self._sync(self._client, project, emit)
-            except (_Stopping, JiraInterrupted):
+            except JiraInterrupted:
                 logger.info("jira_sync_interrupted project=%s cursor at last checkpoint", project)
                 return
             except Exception:
@@ -129,7 +125,7 @@ class JiraPollingAdapter(PollingSourceAdapter):
             for issue in page:
                 if self.stopping:
                     # The checkpoint after the last full page stands.
-                    raise _Stopping
+                    raise JiraInterrupted(project)
                 envelope = normalize_issue(issue, self._site, self._base_url)
                 if envelope is None:
                     skipped += 1

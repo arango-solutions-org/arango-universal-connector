@@ -62,7 +62,7 @@ class JiraAuthError(JiraError):
 
 
 class JiraInterrupted(Exception):
-    """A retry wait was cut short because the connector is stopping."""
+    """A retry wait or a sync was cut short because the connector is stopping."""
 
 
 class JiraClient(Protocol):

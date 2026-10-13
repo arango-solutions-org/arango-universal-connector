@@ -85,8 +85,10 @@ class CoreSettings(ConnectorSettings):
     retention_days: int = Field(
         default=30,
         ge=0,
+        # Larger windows push expires_at past year 9999 and every write would fail.
+        le=36500,
         description="Delete envelopes this many days after they were posted, in ArangoDB "
-        "and the dead-letter file. `0` disables retention.",
+        "and the dead-letter file. `0` disables retention; at most `36500` (100 years).",
     )
     retention_mode: RetentionMode = Field(
         default="expiry",

@@ -88,7 +88,7 @@ All settings come from environment variables or `.env`.
 | `ARANGO_DB` | `connector` | text | Database, created on first start if missing. |
 | `ARANGO_COLLECTION` | `messages` | text | Collection envelopes are written to. |
 | `STATE_COLLECTION` | `connector_state` | text | Collection holding source sync cursors (e.g. Gmail historyId). Never subject to retention. |
-| `RETENTION_DAYS` | `30` | integer ≥ 0 | Delete envelopes this many days after they were posted, in ArangoDB and the dead-letter file. `0` disables retention. |
+| `RETENTION_DAYS` | `30` | integer ≥ 0 | Delete envelopes this many days after they were posted, in ArangoDB and the dead-letter file. `0` disables retention; at most `36500` (100 years). |
 | `RETENTION_MODE` | `expiry` | `expiry` \| `age` | `expiry`: each document stores its own `expires_at`, fixed at write time. `age`: documents expire `RETENTION_DAYS` after `RETENTION_AGE_FIELD`. |
 | `RETENTION_AGE_FIELD` | `created_at` | `created_at` \| `ingested_at` | `age` mode only: the date retention counts from. |
 | `DEAD_LETTER_PATH` | `./dead_letter.jsonl` | path | JSONL file for envelopes that still fail after retries (`/data/dead_letter.jsonl` in Docker). |

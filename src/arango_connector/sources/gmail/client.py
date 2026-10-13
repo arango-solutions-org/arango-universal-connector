@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import base64
 from collections.abc import Iterator
 from typing import Any, Protocol
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+
+from arango_connector.sources.gmail.normalize import decode_part_data
 
 # googleapiclient's own retry: exponential backoff on 5xx, 429 and rate-limit 403s.
 NUM_RETRIES = 5
@@ -154,5 +155,4 @@ class GoogleGmailClient:
             if _status(exc) == 404:
                 return None
             raise
-        data = str(result.get("data", ""))
-        return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+        return decode_part_data(str(result.get("data", "")))
