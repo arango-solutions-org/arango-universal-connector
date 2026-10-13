@@ -51,7 +51,7 @@ Put the site URL, the account's email, the token and the project keys in `.env`.
 | `JIRA_POLL_INTERVAL_SECONDS` | `60` | number > 0 | Seconds between polls. A change in Jira is picked up by the next poll. |
 | `JIRA_INITIAL_SYNC` | `lookback` | `now` \| `lookback` \| `all` | First start for a project: `now` takes only later changes; `lookback` also takes issues updated in the last `JIRA_INITIAL_LOOKBACK`; `all` takes every issue in the project. |
 | `JIRA_INITIAL_LOOKBACK` | `30d` | duration | For `lookback`: e.g. `12h`, `30d`, `365d`. |
-| `JIRA_PAGE_SIZE` | `100` | integer ≥ 1 | Issues per search request, at most 100. |
+| `JIRA_PAGE_SIZE` | `100` | integer ≥ 1, ≤ 100 | Issues per search request. |
 <!-- END GENERATED: config:jira -->
 
 `JIRA_BASE_URL` must be https, `JIRA_EMAIL` an address and each `JIRA_PROJECTS` entry a

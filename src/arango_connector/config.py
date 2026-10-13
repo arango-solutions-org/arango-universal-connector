@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from datetime import timedelta
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import Field, SecretStr, ValidationError, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -88,7 +88,7 @@ class CoreSettings(ConnectorSettings):
         # Larger windows push expires_at past year 9999 and every write would fail.
         le=36500,
         description="Delete envelopes this many days after they were posted, in ArangoDB "
-        "and the dead-letter file. `0` disables retention; at most `36500` (100 years).",
+        "and the dead-letter file. `0` disables retention.",
     )
     retention_mode: RetentionMode = Field(
         default="expiry",
@@ -104,7 +104,9 @@ class CoreSettings(ConnectorSettings):
         description="JSONL file for envelopes that still fail after retries "
         "(`/data/dead_letter.jsonl` in Docker).",
     )
-    log_level: str = Field(default="INFO", description="Python log level.")
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
+        default="INFO", description="Python log level (case-insensitive)."
+    )
 
     @field_validator("arango_hosts", mode="before")
     @classmethod
@@ -116,10 +118,10 @@ class CoreSettings(ConnectorSettings):
             days=self.retention_days, mode=self.retention_mode, age_field=self.retention_age_field
         )
 
-    @field_validator("log_level")
+    @field_validator("log_level", mode="before")
     @classmethod
-    def _upper_log_level(cls, value: str) -> str:
-        return value.upper()
+    def _upper_log_level(cls, value: Any) -> Any:
+        return value.upper() if isinstance(value, str) else value
 
 
 class ConfigError(Exception):

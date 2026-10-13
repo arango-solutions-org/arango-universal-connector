@@ -38,6 +38,7 @@ def _isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         "RETENTION_DAYS",
         "RETENTION_MODE",
         "RETENTION_AGE_FIELD",
+        "LOG_LEVEL",
     ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("ARANGO_PASSWORD", "pw")
@@ -105,6 +106,17 @@ def test_retention_age_mode_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_retention_days_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RETENTION_DAYS", "36501")
     with pytest.raises(ConfigError, match="RETENTION_DAYS"):
+        load_settings(CoreSettings)
+
+
+def test_log_level_is_case_insensitive(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOG_LEVEL", "debug")
+    assert load_settings(CoreSettings).log_level == "DEBUG"
+
+
+def test_unknown_log_level_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOG_LEVEL", "verbose")
+    with pytest.raises(ConfigError, match="LOG_LEVEL"):
         load_settings(CoreSettings)
 
 

@@ -85,7 +85,7 @@ def _values(field: FieldInfo) -> str:
         return "`true` \\| `false`"
     bounds = []
     for meta in field.metadata:
-        for attr, symbol in (("ge", "≥"), ("gt", ">")):
+        for attr, symbol in (("ge", "≥"), ("gt", ">"), ("le", "≤")):
             value = getattr(meta, attr, None)
             if value is not None:
                 bounds.append(f"{symbol} {value}")
