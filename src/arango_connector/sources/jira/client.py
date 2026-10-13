@@ -169,7 +169,9 @@ class RequestsJiraClient:
             page = self._request("POST", "/rest/api/3/search/jql", json=request)
             yield [i for i in page.get("issues") or [] if isinstance(i, dict)]
             token = page.get("nextPageToken")
-            if page.get("isLast", True) or not token:
+            # A missing isLast is not taken as the end: stopping early would let the
+            # cursor jump past issues never read.
+            if page.get("isLast") or not token:
                 return
 
     def list_comments(self, issue_id: str) -> Iterator[dict[str, Any]]:

@@ -127,6 +127,15 @@ def test_search_sends_jql_in_the_users_time_zone_and_follows_pages() -> None:
     assert session.headers["Accept"] == "application/json"
 
 
+def test_search_follows_a_token_when_is_last_is_missing() -> None:
+    client, _, _ = make_client(
+        ok({"issues": [{"id": "1"}], "nextPageToken": "t1"}),
+        ok({"issues": [{"id": "2"}]}),
+    )
+    pages = list(client.search_issues("PROJ", None))
+    assert [[i["id"] for i in page] for page in pages] == [["1"], ["2"]]
+
+
 def test_time_zone_is_looked_up_once() -> None:
     client, session, _ = make_client(
         ok(MYSELF), ok({"issues": [], "isLast": True}), ok({"issues": [], "isLast": True})

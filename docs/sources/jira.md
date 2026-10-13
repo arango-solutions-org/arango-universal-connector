@@ -129,7 +129,9 @@ docker compose --profile jira up -d --build
 - **What is not removed.** Deleted issues and comments stay stored (see
   [Not supported yet](#not-supported-yet)). An issue moved to an unwatched project
   stays as last seen; moved to a watched one, it keeps its key and its `scope` and
-  `issue_key` follow the move.
+  `issue_key` follow the move. Its comments are only rewritten when they change, so
+  join comments to issues by `payload.parent_id` (the stable issue id): a comment's
+  `scope` and `parent_key` are as of its last write.
 - **Rate limits and failures.** 429 and 5xx responses and connection errors are retried,
   with up to five attempts per request, waiting `Retry-After` when Jira sends it (capped
   at 60s) and an exponential backoff with jitter otherwise; each wait logs

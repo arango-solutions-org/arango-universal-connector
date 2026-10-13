@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
@@ -58,11 +57,16 @@ class Harness:
         pipeline = Pipeline(
             adapter, sink, dead_letter_path="/dev/null", retention=RETENTION, state=state
         )
-        # One poll, then stop: the wait after the poll sees the stop flag.
-        stopper = threading.Timer(0.02, adapter.stop)
-        stopper.start()
+        # Exactly one poll, then stop: the wait after the poll sees the stop flag. (A
+        # timer could fire before the pipeline's setup finishes, and skip the poll.)
+        poll_once = adapter.poll_once
+
+        def poll_then_stop(emit: Any) -> None:
+            poll_once(emit)
+            adapter.stop()
+
+        adapter.poll_once = poll_then_stop  # type: ignore[method-assign]
         pipeline.run()
-        stopper.join()
         pipeline.shutdown()
 
     def docs(self) -> dict[str, dict[str, Any]]:

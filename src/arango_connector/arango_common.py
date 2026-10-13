@@ -7,7 +7,7 @@ import logging
 import requests
 from arango import ArangoClient
 from arango.database import StandardDatabase
-from arango.exceptions import ArangoServerError, DatabaseCreateError
+from arango.exceptions import ArangoServerError, DatabaseCreateError, ServerConnectionError
 from tenacity import (
     Retrying,
     before_sleep_log,
@@ -19,18 +19,6 @@ from tenacity import (
 logger = logging.getLogger(__name__)
 
 
-class ArangoWriteError(Exception):
-    """One or more documents in a batch failed to write."""
-
-    def __init__(self, errors: list[ArangoServerError]) -> None:
-        self.errors = errors
-        codes = sorted({str(e.http_code) for e in errors})
-        super().__init__(
-            f"{len(errors)} document(s) failed to write (http_codes={','.join(codes)}): "
-            f"{errors[0].error_message}"
-        )
-
-
 def is_retryable(exc: BaseException) -> bool:
     """Retry connection problems and transient server errors, not client mistakes."""
     # python-arango raises the builtin ConnectionAbortedError once its own
@@ -39,8 +27,6 @@ def is_retryable(exc: BaseException) -> bool:
         return True
     if isinstance(exc, ArangoServerError):
         return exc.http_code is None or exc.http_code >= 500 or exc.http_code in (408, 409, 429)
-    if isinstance(exc, ArangoWriteError):
-        return any(is_retryable(e) for e in exc.errors)
     return False
 
 
@@ -65,9 +51,15 @@ def connect(
 ) -> tuple[ArangoClient, StandardDatabase]:
     """Open a client and the named database, creating the database if missing.
 
-    With ``create=False`` a missing database raises ``LookupError`` instead.
+    With ``create=False`` a missing database raises ``LookupError`` instead. Only
+    creating the database needs access to ``_system``, so a user limited to ``db_name``
+    can connect once it exists.
     """
     client = ArangoClient(hosts=hosts)
+    try:
+        return client, client.db(db_name, username=username, password=password, verify=True)
+    except ServerConnectionError:
+        pass  # missing, or not accessible: the _system path below creates or explains
     sys_db = client.db("_system", username=username, password=password)
 
     if not sys_db.has_database(db_name):

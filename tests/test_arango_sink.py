@@ -254,3 +254,34 @@ def test_edit_overwrites_stored_message(sink: ArangoSink, load_event: LoadEvent)
     # Replace, not update: keys the edit dropped must not linger inside raw.
     assert "reactions" not in doc["raw"]
     assert "wave" not in json.dumps(doc)
+
+
+def test_user_limited_to_the_database_can_run_the_sink(
+    sink: ArangoSink, arango_conn: ArangoConn, load_event: LoadEvent
+) -> None:
+    sink.setup()  # as the admin user: creates the database and collection
+    from arango import ArangoClient
+
+    client = ArangoClient(hosts=arango_conn.hosts)
+    sys_db = client.db("_system", username=arango_conn.username, password=arango_conn.password)
+    user = f"{arango_conn.db_name}_writer"
+    sys_db.create_user(user, "writer-password")
+    try:
+        sys_db.update_permission(user, "rw", arango_conn.db_name)
+        limited = ArangoSink(
+            hosts=arango_conn.hosts,
+            username=user,
+            password="writer-password",
+            db_name=arango_conn.db_name,
+            collection_name="messages",
+            retry_wait_initial=0.01,
+        )
+        limited.setup()
+        env = normalize(load_event("user_message"), "T0TESTTEAM")
+        assert env is not None
+        limited.write([env])
+        limited.close()
+        assert _count(sink) == 1
+    finally:
+        sys_db.delete_user(user)
+        client.close()
