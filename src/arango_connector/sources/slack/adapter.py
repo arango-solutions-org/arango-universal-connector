@@ -36,7 +36,9 @@ class SlackSocketModeAdapter(SourceAdapter):
         # name until restart.
         self._user_names: dict[str, str | None] = {}
 
-        self.app = App(token=bot_token)
+        # Every write replaces the whole document, so events must be handled in the order
+        # Slack sent them: listeners run inline (here) on one Socket Mode worker (start()).
+        self.app = App(token=bot_token, process_before_response=True)
         self.app.event("message")(self._on_message)
 
     def _on_message(self, event: dict[str, Any], body: dict[str, Any]) -> None:
@@ -101,7 +103,7 @@ class SlackSocketModeAdapter(SourceAdapter):
         logger.info(
             "slack_adapter_starting watched_channels=%s", ",".join(sorted(self.channel_ids))
         )
-        self._handler = SocketModeHandler(self.app, self._app_token)
+        self._handler = SocketModeHandler(self.app, self._app_token, concurrency=1)
         self._handler.connect()
         logger.info("slack_adapter_connected")
         # Wake periodically so signal handlers on the main thread get a chance to run.

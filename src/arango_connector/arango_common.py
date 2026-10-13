@@ -7,7 +7,12 @@ import logging
 import requests
 from arango import ArangoClient
 from arango.database import StandardDatabase
-from arango.exceptions import ArangoServerError, DatabaseCreateError, ServerConnectionError
+from arango.exceptions import (
+    ArangoServerError,
+    CollectionCreateError,
+    DatabaseCreateError,
+    ServerConnectionError,
+)
 from tenacity import (
     Retrying,
     before_sleep_log,
@@ -80,5 +85,10 @@ def connect(
 def ensure_collection(db: StandardDatabase, name: str) -> None:
     """Create the collection if missing."""
     if not db.has_collection(name):
-        db.create_collection(name)
-        logger.info("arango_collection_created db=%s collection=%s", db.name, name)
+        try:
+            db.create_collection(name)
+            logger.info("arango_collection_created db=%s collection=%s", db.name, name)
+        except CollectionCreateError:
+            # Lost a race with another process creating it; fine if it now exists.
+            if not db.has_collection(name):
+                raise

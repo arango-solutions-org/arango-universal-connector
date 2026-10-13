@@ -20,7 +20,7 @@ SLACK_VARS = ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_CHANNEL_IDS")
 class _FakeApp:
     """Stands in for slack_bolt.App so building the adapter makes no network calls."""
 
-    def __init__(self, token: str) -> None:
+    def __init__(self, token: str, **_: Any) -> None:
         self.token = token
 
     def event(self, _name: str) -> Callable[[Any], Any]:
