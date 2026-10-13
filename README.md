@@ -2,11 +2,11 @@
 
 A Python service that streams messages from Slack channels (in real time, over Socket
 Mode), emails from Gmail mailboxes and issues and comments from Jira Cloud projects
-(both polled incrementally) into ArangoDB as JSON documents.
+(both polled incrementally) into Arango as JSON documents.
 
 This is the MVP of a **universal connector**: sources (Slack, Gmail and Jira today; Teams,
 SharePoint, … later) are normalized into a source-agnostic [`Envelope`](#document-shape)
-and written by a `Sink` (ArangoDB today). Each connector process runs one source.
+and written by a `Sink` (Arango today). Each connector process runs one source.
 
 ```
 Slack (Socket Mode) ──► SlackSocketModeAdapter ──► normalize() ──┐
@@ -37,7 +37,7 @@ Whatever the source, the connector:
 - Creates the database, collections and indexes on startup (idempotent), including a
   `connector_state` collection where polling sources keep their sync cursors.
 - Deletes documents `RETENTION_DAYS` days after they were posted, 30 by default, from
-  both ArangoDB and the dead-letter file. See [Retention](#retention).
+  both Arango and the dead-letter file. See [Retention](#retention).
 - Retries failed writes (3 attempts, exponential backoff). If a write still fails, the
   document is appended to a dead-letter JSONL file instead of being lost.
 
@@ -55,7 +55,7 @@ run it outside Docker.
    ```
 
    Set `ARANGO_PASSWORD` and the source's variables.
-3. Run ArangoDB and the connector for each source you want, one profile per source:
+3. Run Arango and the connector for each source you want, one profile per source:
 
    ```bash
    docker compose --profile slack up --build    # the Slack connector service
@@ -66,7 +66,7 @@ run it outside Docker.
    Profiles combine, e.g. `--profile slack --profile jira`. Each service sets its own
    `SOURCE`; the `SOURCE` in `.env` only applies to local runs (`make run`).
 
-4. Open the ArangoDB web UI at <http://localhost:8529> (user `root`, your
+4. Open the Arango web UI at <http://localhost:8529> (user `root`, your
    `ARANGO_PASSWORD`). Choose database `connector` on the login screen; it appears
    after the connector's first start.
 
@@ -82,13 +82,13 @@ All settings come from environment variables or `.env`.
 |---|---|---|---|
 | `SOURCE` | `slack` | text | Source adapter to run (one source per process). |
 | `SINK` | `arango` | text | Sink to write to. |
-| `ARANGO_HOSTS` | `http://localhost:8529` | comma-separated | ArangoDB endpoint(s), comma-separated for multiple coordinators. |
-| `ARANGO_USERNAME` | `root` | text | ArangoDB user. |
-| `ARANGO_PASSWORD` | **required** | secret | ArangoDB password. Also the root password of the Compose ArangoDB. |
+| `ARANGO_HOSTS` | `http://localhost:8529` | comma-separated | Arango endpoint(s), comma-separated for multiple coordinators. |
+| `ARANGO_USERNAME` | `root` | text | Arango user. |
+| `ARANGO_PASSWORD` | **required** | secret | Arango password. Also the root password of the Compose Arango. |
 | `ARANGO_DB` | `connector` | text | Database, created on first start if missing. |
 | `ARANGO_COLLECTION` | `messages` | text | Collection envelopes are written to. |
 | `STATE_COLLECTION` | `connector_state` | text | Collection holding source sync cursors (e.g. Gmail historyId). Never subject to retention. |
-| `RETENTION_DAYS` | `30` | integer ≥ 0, ≤ 36500 | Delete envelopes this many days after they were posted, in ArangoDB and the dead-letter file. `0` disables retention. |
+| `RETENTION_DAYS` | `30` | integer ≥ 0, ≤ 36500 | Delete envelopes this many days after they were posted, in Arango and the dead-letter file. `0` disables retention. |
 | `RETENTION_MODE` | `expiry` | `expiry` \| `age` | `expiry`: each document stores its own `expires_at`, fixed at write time. `age`: documents expire `RETENTION_DAYS` after `RETENTION_AGE_FIELD`. |
 | `RETENTION_AGE_FIELD` | `created_at` | `created_at` \| `ingested_at` | `age` mode only: the date retention counts from. |
 | `DEAD_LETTER_PATH` | `./dead_letter.jsonl` | path | JSONL file for envelopes that still fail after retries (`/data/dead_letter.jsonl` in Docker). |
@@ -106,15 +106,15 @@ the source it runs.
 The connector exits immediately with a clear message if a required variable is
 missing. Tokens and passwords are held as `SecretStr` and are never logged.
 
-> **Note:** `ARANGO_ROOT_PASSWORD` is only applied the first time the ArangoDB
+> **Note:** `ARANGO_ROOT_PASSWORD` is only applied the first time the Arango
 > volume is initialized. If you change `ARANGO_PASSWORD` later, either change the
-> password in ArangoDB too or reset the volume with `docker compose down -v`
+> password in Arango too or reset the volume with `docker compose down -v`
 > (this deletes all stored data).
 
 ## Retention
 
 Envelopes are deleted `RETENTION_DAYS` days after they were **posted**, 30 by default.
-Set `RETENTION_DAYS=0` to keep them forever. Deletion is enforced by an ArangoDB TTL
+Set `RETENTION_DAYS=0` to keep them forever. Deletion is enforced by an Arango TTL
 index, and the same rule is applied to the dead-letter file.
 
 Because the window counts from creation, it suits sources whose items are not edited
@@ -144,10 +144,10 @@ cost of one global window per collection.
 
 Startup logs `arango_ttl_index_created` at WARNING whenever it creates or changes the
 index. In `expiry` mode it also logs `arango_existing_expiry_unchanged`, as a reminder
-that stored documents keep their old deadlines. Switching mode is safe: ArangoDB allows
+that stored documents keep their old deadlines. Switching mode is safe: Arango allows
 only one TTL index per collection, so the connector drops the old one first.
 
-ArangoDB sweeps expired documents in the background rather than at the exact moment
+Arango sweeps expired documents in the background rather than at the exact moment
 they expire, so treat the window as "removed within `RETENTION_DAYS` days".
 
 ### Applying a new window to stored documents
@@ -169,7 +169,7 @@ the second run finds nothing to do. In Docker:
 > **Upgrading from schema version 3:** documents written before this version have no
 > `expires_at`, so in `expiry` mode they are **never deleted** until you run
 > `arango-connector-reconcile-expiry --only-missing` once. That run gives them a
-> deadline based on when they were posted, and ArangoDB then deletes any that are
+> deadline based on when they were posted, and Arango then deletes any that are
 > already past it. This is not reversible.
 
 ### Dead-letter file
@@ -184,7 +184,7 @@ than discarded (with a `dead_letter_prune_unreadable` warning) so a bad write su
 instead of vanishing.
 
 One caveat worth repeating: retention is time-based, so it is not a substitute for
-honouring a deletion. A message you delete in Slack still sits in ArangoDB until its
+honouring a deletion. A message you delete in Slack still sits in Arango until its
 window elapses.
 
 ## Document shape
@@ -247,7 +247,7 @@ removes them, so queries that span the upgrade should filter on `schema_version`
 
 ## Dead-letter file
 
-If a write still fails after retries (for example, because ArangoDB is unreachable),
+If a write still fails after retries (for example, because Arango is unreachable),
 the document is appended as one JSON line to `DEAD_LETTER_PATH` and an
 `envelope_write_failed` error is logged. The source keeps running. Because writes
 are idempotent, dead-lettered documents can be safely replayed later. There is no
@@ -262,14 +262,14 @@ The Makefile wraps the common tasks; run `make` (or `make help`) to list them.
 
 ```bash
 make install            # uv sync
-make check              # lint, format check, mypy, unit tests (no ArangoDB needed)
-make test-integration   # starts a disposable ArangoDB on :18529, then runs integration tests
+make check              # lint, format check, mypy, unit tests (no Arango needed)
+make test-integration   # starts a disposable Arango on :18529, then runs integration tests
 make test-db-down       # remove that database when you're done
 make docs-gen           # regenerate config tables / source catalogue after changing settings
 ```
 
 CI (`.github/workflows/ci.yml`) runs `make check` and the integration tests (against an
-ArangoDB service container) on every PR and push to `main`. Docs are published to the
+Arango service container) on every PR and push to `main`. Docs are published to the
 [wiki](https://github.com/arango-solutions/arango-universal-connector/wiki) on merge; see
 [how the docs are built](docs/README.md#how-these-docs-are-built).
 
@@ -281,12 +281,12 @@ Without make:
 
 ```bash
 uv sync
-uv run pytest                  # unit tests (no ArangoDB needed)
+uv run pytest                  # unit tests (no Arango needed)
 uv run ruff check . && uv run ruff format --check .
 uv run mypy
 ```
 
-Integration tests need a running ArangoDB. They read `ARANGO_*` from the environment
+Integration tests need a running Arango. They read `ARANGO_*` from the environment
 or `.env`, and use a throwaway database that is dropped afterwards:
 
 ```bash
@@ -367,7 +367,7 @@ in `SINKS`.
 These are deliberately out of scope for the MVP. Look for `TODO(future):` comments at
 the extension points, and the "Not supported yet" section of each source's page.
 
-- Deletes. An item deleted in its source stays in ArangoDB until `RETENTION_DAYS`
+- Deletes. An item deleted in its source stays in Arango until `RETENTION_DAYS`
   elapses. Handling them needs a delete operation on `Envelope` and `Sink`, which
   today only express "write this document".
 - Graph modeling (users/channels collections, edges) and ArangoSearch.

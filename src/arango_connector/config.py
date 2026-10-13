@@ -65,11 +65,11 @@ class CoreSettings(ConnectorSettings):
 
     arango_hosts: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:8529"],
-        description="ArangoDB endpoint(s), comma-separated for multiple coordinators.",
+        description="Arango endpoint(s), comma-separated for multiple coordinators.",
     )
-    arango_username: str = Field(default="root", description="ArangoDB user.")
+    arango_username: str = Field(default="root", description="Arango user.")
     arango_password: SecretStr = Field(
-        description="ArangoDB password. Also the root password of the Compose ArangoDB."
+        description="Arango password. Also the root password of the Compose Arango."
     )
     arango_db: str = Field(
         default="connector", description="Database, created on first start if missing."
@@ -87,7 +87,7 @@ class CoreSettings(ConnectorSettings):
         ge=0,
         # Larger windows push expires_at past year 9999 and every write would fail.
         le=36500,
-        description="Delete envelopes this many days after they were posted, in ArangoDB "
+        description="Delete envelopes this many days after they were posted, in Arango "
         "and the dead-letter file. `0` disables retention.",
     )
     retention_mode: RetentionMode = Field(

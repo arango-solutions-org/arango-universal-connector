@@ -172,7 +172,7 @@ otherwise.
 
 ## Running
 
-**Locally**, against ArangoDB from `docker compose up -d arangodb`, or the disposable
+**Locally**, against Arango from `docker compose up -d arangodb`, or the disposable
 one from `make test-db-up` (<http://localhost:18529>, `root` / `test-password`):
 
 ```bash
@@ -180,7 +180,7 @@ SOURCE=gmail make run      # or: SOURCE=gmail uv run python -m arango_connector.
 ```
 
 The `connector` database and its collections are created on the first start, so they
-appear in the ArangoDB UI only after the connector has run once. In the UI, pick the
+appear in the Arango UI only after the connector has run once. In the UI, pick the
 database on the login screen.
 
 **In Docker**, the `connector-gmail` Compose service runs as a separate process next to
@@ -344,7 +344,7 @@ becomes its own `kind: "attachment"` document in the same collection as the emai
 - **Failures.** An attachment that disappeared is stored with `skipped_reason:
   "download_failed"`. A transient API error fails that mailbox's sync, and the next
   poll retries from the same cursor.
-- **Size and retention.** Base64 makes files about a third larger. ArangoDB is not a
+- **Size and retention.** Base64 makes files about a third larger. Arango is not a
   blob store, so keep `GMAIL_ATTACHMENT_MAX_BYTES` modest. Attachments carry their
   email's `created_at`, so they expire with it.
 
@@ -353,7 +353,7 @@ becomes its own `kind: "attachment"` document in the same collection as the emai
 Email holds personal and sensitive data. Beyond the read-only scope:
 
 - Write Gmail to its own collection (the Compose service uses `emails`), and give
-  readers a dedicated ArangoDB user with access to that collection only.
+  readers a dedicated Arango user with access to that collection only.
 - `GMAIL_KEY_MODE=hashed` (the default) keeps mailbox addresses out of document keys,
   cursors and logs. The address is still present in the payload headers.
 - Use `GMAIL_STORE_BODY=false`, `GMAIL_STORE_BCC=false`, `GMAIL_RAW_MODE=none` and
