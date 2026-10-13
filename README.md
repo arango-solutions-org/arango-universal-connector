@@ -54,14 +54,17 @@ run it outside Docker.
    cp .env.example .env
    ```
 
-   Set `SOURCE`, `ARANGO_PASSWORD`, and the source's variables.
-3. Run the full stack:
+   Set `ARANGO_PASSWORD` and the source's variables.
+3. Run ArangoDB and the connector for each source you want, one profile per source:
 
    ```bash
-   docker compose up --build                    # Slack (the default connector service)
-   docker compose --profile gmail up --build    # adds the Gmail connector service
-   docker compose --profile jira up --build     # adds the Jira connector service
+   docker compose --profile slack up --build    # the Slack connector service
+   docker compose --profile gmail up --build    # the Gmail connector service
+   docker compose --profile jira up --build     # the Jira connector service
    ```
+
+   Profiles combine, e.g. `--profile slack --profile jira`. Each service sets its own
+   `SOURCE`; the `SOURCE` in `.env` only applies to local runs (`make run`).
 
 4. Open the ArangoDB web UI at <http://localhost:8529> (user `root`, your
    `ARANGO_PASSWORD`). Choose database `connector` on the login screen; it appears

@@ -43,7 +43,7 @@ Messages go to `ARANGO_COLLECTION` (default `messages`).
 
 ```bash
 cp .env.example .env      # set SLACK_* and ARANGO_PASSWORD
-docker compose up --build
+docker compose --profile slack up --build
 ```
 
 Post a message in a watched channel. Within a few seconds it appears in the ArangoDB web
@@ -59,8 +59,9 @@ To run the connector outside Docker: `docker compose up -d arangodb`, then
 
 ## How sync works
 
-- **What is read:** new messages, thread replies, bot messages and thread broadcasts
-  in the watched channels. Other channels are ignored.
+- **What is read:** new messages, thread replies, bot messages, thread broadcasts and
+  messages with uploads (their text; the file itself is not stored) in the watched
+  channels. Other channels are ignored.
 - **Edits** overwrite the stored document. An edit is keyed on the original message's
   `ts`, so it lands on the existing document, and `updated_at` is set. Because the
   whole document is replaced, content the edit removed does not survive anywhere,
