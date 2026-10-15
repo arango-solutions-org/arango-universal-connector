@@ -201,8 +201,23 @@ def test_timeout_fails_the_job(server: SidecarServer) -> None:
     LinkRuntime(EchoLink(on_item=tick), server.stub, clock=lambda: clock[0]).run_once()
 
     assert job.state == S.JOB_STATE_FAILED
-    assert job.descriptions[-1].startswith("timed out after")
+    assert job.descriptions[-1] == "timed out after 3 record(s)"  # 10s, 20s, then 30s > 25s
     assert RESULT_FILE not in job.files
+
+
+def test_stopping_mid_job_fails_it_for_resubmission(server: SidecarServer) -> None:
+    rt = runtime(server)
+    job = server.sidecar.submit(b'{"count": 5}')
+    rt.link = EchoLink(on_item=lambda n: n == 1 and rt.stop())  # SIGTERM during the job
+    rt.run_once()
+
+    assert job.state == S.JOB_STATE_FAILED
+    assert job.descriptions[-1] == "link restarting; resubmit the job after 2 record(s)"
+    assert RESULT_FILE not in job.files
+
+
+def test_unreadable_claimed_job_does_not_crash_the_loop(server: SidecarServer) -> None:
+    runtime(server).process("no-such-job")  # GetJob fails; the failure is logged, not raised
 
 
 def test_run_forever_processes_jobs_until_stopped(server: SidecarServer) -> None:

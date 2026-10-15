@@ -110,7 +110,10 @@ class JiraLink(Link[Search | GetIssue | Export]):
                 return
 
             if isinstance(job_input, Search):
-                jql = scoped_jql(job_input.query, allowed)
+                try:
+                    jql = scoped_jql(job_input.query, allowed)
+                except ValueError as exc:
+                    raise JobError(f"invalid query: {exc}") from None
             else:
                 if job_input.project not in allowed:
                     raise JobError(

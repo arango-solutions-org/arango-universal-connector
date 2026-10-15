@@ -135,6 +135,33 @@ def test_export_date_range_query() -> None:
     assert _range_query(None, None) == "in:anywhere"
 
 
+def test_message_match_puts_the_labels_in_the_gmail_query(gmail: FakeGmailClient) -> None:
+    run(link(gmail, gmail_label_match="message"), operation="export", mailbox=ADA)
+    run(link(gmail, gmail_label_match="message"), operation="search", mailbox=ADA, query="a OR b")
+    assert gmail.queries == [
+        '(in:anywhere) {in:inbox label:"test" in:sent}',
+        '(a OR b) {in:inbox label:"test" in:sent}',
+    ]
+
+
+def test_thread_match_leaves_the_query_alone(gmail: FakeGmailClient) -> None:
+    # A reply without the label still qualifies through its thread, so Gmail can't filter.
+    run(link(gmail, gmail_label_match="thread"), operation="search", mailbox=ADA, query="x")
+    assert gmail.queries == ["x"]
+
+
+def test_labels_gmail_search_cannot_name_are_left_to_the_code_filter(
+    gmail: FakeGmailClient,
+) -> None:
+    run(
+        link(gmail, gmail_label_match="message", gmail_labels=["INBOX", "TRASH"]),
+        operation="search",
+        mailbox=ADA,
+        query="x",
+    )
+    assert gmail.queries == ["x"]
+
+
 def test_attachments_are_included_when_requested(gmail: FakeGmailClient) -> None:
     body = with_part_ids(
         part(

@@ -31,6 +31,15 @@ from arango_connector.sources.gmail.operations import (
 )
 from arango_connector_links.link import Example, JobContext, JobError, Link
 
+# Gmail search terms for system labels; their IDs don't work with ``label:``.
+_SYSTEM_LABEL_TERMS = {
+    "INBOX": "in:inbox",
+    "SENT": "in:sent",
+    "STARRED": "is:starred",
+    "IMPORTANT": "is:important",
+    "UNREAD": "is:unread",
+}
+
 # What a configured GMAIL_ATTACHMENTS mode lets a job ask for.
 _ALLOWED_ATTACHMENTS: dict[str, set[str]] = {
     "off": {"off"},
@@ -143,18 +152,20 @@ class GmailLink(Link[Search | GetThread | Export]):
         client = self._client(mailbox)
         labels = self._label_filter(mailbox, client)
         limit: int | None = None
-        if isinstance(job_input, Search):
-            ids: Iterable[str] = client.list_message_ids(job_input.query)
-            limit = job_input.max_results
-        elif isinstance(job_input, GetThread):
+        ids: Iterable[str]
+        if isinstance(job_input, GetThread):
             thread = client.get_thread_messages(job_input.thread_id)
             if not thread:
                 raise JobError(f"thread {job_input.thread_id!r} not found")
             ids = [str(m["id"]) for m in thread]
         else:
-            labels = self._narrow(mailbox, labels, job_input.labels)
-            ids = client.list_message_ids(_range_query(job_input.after, job_input.before))
+            if isinstance(job_input, Export):
+                labels = self._narrow(mailbox, labels, job_input.labels)
+                query = _range_query(job_input.after, job_input.before)
+            else:
+                query = job_input.query
             limit = job_input.max_results
+            ids = client.list_message_ids(self._labelled(query, mailbox, labels))
 
         options = NormalizeOptions(
             key_mode=self.settings.gmail_key_mode,
@@ -206,6 +217,31 @@ class GmailLink(Link[Search | GetThread | Export]):
             exclude, _ = resolve_labels(self.settings.gmail_exclude_labels, available)
             self._labels[mailbox] = LabelFilter(include, exclude)
         return self._labels[mailbox]
+
+    def _labelled(self, query: str, mailbox: str, labels: LabelFilter) -> str:
+        """``query`` limited to the include labels, so Gmail skips mail the filter would drop.
+
+        Only in ``message`` match mode: in ``thread`` mode a reply without the label still
+        qualifies through its thread, so every candidate has to be read.
+        shortcut: thread mode scans all of ``query``'s matches; narrow it via threads.list
+        if large-mailbox exports in thread mode time out.
+        """
+        if self.settings.gmail_label_match != "message":
+            return query
+        names = {
+            str(label["id"]): str(label.get("name", ""))
+            for label in self._available(mailbox, self._client(mailbox))
+        }
+        terms = []
+        for label_id in sorted(labels.include):
+            name = names.get(label_id, "")
+            if label_id in _SYSTEM_LABEL_TERMS:
+                terms.append(_SYSTEM_LABEL_TERMS[label_id])
+            elif label_id.startswith("Label_") and name and '"' not in name:
+                terms.append(f'label:"{name}"')
+            else:
+                return query  # a label Gmail search can't name; the code filter still applies
+        return f"({query}) {{{' '.join(terms)}}}"
 
     def _narrow(
         self, mailbox: str, labels: LabelFilter, requested: list[str] | None

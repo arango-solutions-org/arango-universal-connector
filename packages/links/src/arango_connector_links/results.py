@@ -23,13 +23,11 @@ class JsonlResult:
     def __init__(self) -> None:
         self._file = tempfile.SpooledTemporaryFile(max_size=_SPOOL_BYTES)  # noqa: SIM115
         self.records = 0
-        self.bytes = 0
 
     def write(self, envelope: Envelope[Any]) -> None:
         line = json.dumps(envelope.to_document(), ensure_ascii=False).encode() + b"\n"
         self._file.write(line)
         self.records += 1
-        self.bytes += len(line)
 
     def upload_requests(
         self, job_id: str, name: str

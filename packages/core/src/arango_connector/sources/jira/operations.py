@@ -52,7 +52,11 @@ def scoped_jql(jql: str, projects: Iterable[str]) -> str:
 
     The caller's query is parenthesised, so its own ``OR`` clauses can't widen the scope;
     a trailing ``ORDER BY`` is kept outside the parentheses, where JQL requires it.
+    Raises ``ValueError`` if its parentheses don't balance, since ``x) OR (y`` would
+    otherwise close ours and escape the scope.
     """
+    if not _balanced(_outside_quotes(jql)):
+        raise ValueError("unbalanced parentheses in the query")
     quoted = ", ".join('"' + p.replace("\\", "\\\\").replace('"', '\\"') + '"' for p in projects)
     scope = f"project in ({quoted})"
     query, order = jql.strip(), ""
@@ -64,6 +68,21 @@ def scoped_jql(jql: str, projects: Iterable[str]) -> str:
 
 def _last_order_by(jql: str) -> int | None:
     """Where the query's own ``ORDER BY`` starts, ignoring text inside quotes."""
+    matches = list(_ORDER_BY.finditer(_outside_quotes(jql)))
+    return matches[-1].start() if matches else None
+
+
+def _balanced(text: str) -> bool:
+    depth = 0
+    for char in text:
+        depth += {"(": 1, ")": -1}.get(char, 0)
+        if depth < 0:
+            return False
+    return depth == 0
+
+
+def _outside_quotes(jql: str) -> str:
+    """``jql`` with quoted text blanked out, same length."""
     outside = []  # the query with quoted text blanked out, same length
     quote: str | None = None
     escaped = False
@@ -80,8 +99,7 @@ def _last_order_by(jql: str) -> int | None:
             if char in "\"'":
                 quote = char
             outside.append(" " if quote else char)
-    matches = list(_ORDER_BY.finditer("".join(outside)))
-    return matches[-1].start() if matches else None
+    return "".join(outside)
 
 
 def issue_project(issue: dict[str, Any]) -> str | None:

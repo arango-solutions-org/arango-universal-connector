@@ -131,7 +131,12 @@ class LinkRuntime:
         return True
 
     def process(self, job_id: str) -> None:
-        job = self.stub.GetJob(external_pb2.GetJobRequest(id=job_id))
+        try:
+            job = self.stub.GetJob(external_pb2.GetJobRequest(id=job_id))
+        except grpc.RpcError as exc:
+            # We hold the claim, so fail it rather than leave it Scheduled forever.
+            self._fail(job_id, f"could not read the job ({_code(exc)}); resubmit it")
+            return
         if _state(job) == CANCELLED:
             logger.info("job_skipped job=%s reason=cancelled", job_id)
             return
@@ -140,7 +145,13 @@ class LinkRuntime:
         deadline = (
             started + job.timeout.ToTimedelta().total_seconds() if job.HasField("timeout") else None
         )
-        ctx = JobContext(job_id=job_id, deadline=deadline, _check=self._cancel_checker(job_id))
+        ctx = JobContext(
+            job_id=job_id,
+            deadline=deadline,
+            clock=self._clock,
+            _check=self._cancel_checker(job_id),
+            _stopping=lambda: self.stopping,
+        )
         result = JsonlResult()
         try:
             job_input = self.link.parse_input(job.input)

@@ -1,4 +1,4 @@
-# Which link this release runs: gmail | selftest.
+# Which link this release runs: gmail | slack | jira | selftest.
 link: selftest
 
 arangodb_platform:

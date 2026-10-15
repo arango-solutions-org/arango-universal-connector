@@ -11,11 +11,11 @@ from __future__ import annotations
 import json
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, TypeAdapter
+from pydantic import TypeAdapter
 
 from arango_connector.envelope import Envelope
 
@@ -30,7 +30,7 @@ class JobError(Exception):
 
 
 class JobCancelled(Exception):
-    """The job was cancelled, or ran past its timeout, while running."""
+    """The job was cancelled, ran past its timeout, or the link is shutting down."""
 
 
 @dataclass
@@ -38,13 +38,20 @@ class JobContext:
     """Passed to ``Link.run``; lets long operations stop promptly."""
 
     job_id: str
-    deadline: float | None = None  # time.monotonic() value
+    deadline: float | None = None  # a clock() value
     cancelled: bool = False
+    clock: Callable[[], float] = time.monotonic
     _check: Any = field(default=None, repr=False)
+    _stopping: Callable[[], bool] | None = field(default=None, repr=False)
 
     def check(self) -> None:
-        """Raise ``JobCancelled`` if the job was cancelled or is past its timeout."""
-        if self.deadline is not None and time.monotonic() > self.deadline:
+        """Raise ``JobCancelled`` if the link is stopping, or the job was cancelled or is
+        past its timeout."""
+        if self._stopping is not None and self._stopping():
+            # Jobs can't be put back in the queue (UpdateJobStatus allows Running,
+            # Completed or Failed), so a restart fails the job and the caller resubmits.
+            raise JobCancelled("link restarting; resubmit the job")
+        if self.deadline is not None and self.clock() > self.deadline:
             raise JobCancelled("timed out")
         if self._check is not None and self._check():
             self.cancelled = True
@@ -98,7 +105,3 @@ class Link[I](ABC):
     @abstractmethod
     def run(self, job_input: I, ctx: JobContext) -> Iterator[Envelope[Any]]:
         """Run one job. Call ``ctx.check()`` between items so cancellation is prompt."""
-
-
-def model_example(model: BaseModel) -> dict[str, Any]:
-    return model.model_dump(mode="json", exclude_none=True)

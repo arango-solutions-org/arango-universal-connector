@@ -358,7 +358,10 @@ what a job may touch:
 - `GMAIL_MAILBOXES`: the only mailboxes a job may read.
 - `GMAIL_LABELS` / `GMAIL_EXCLUDE_LABELS` / `GMAIL_LABEL_MATCH`: every message returned
   passes the same label and thread rules as standalone sync. `export` can narrow to some
-  of the labels, never widen.
+  of the labels, never widen. With `GMAIL_LABEL_MATCH=message` the labels are added to
+  the Gmail query, so Gmail does the filtering. With `thread` (the default) every message
+  matching the query is read and checked, because a reply can qualify without the label,
+  so give large-mailbox exports a date range.
 - `GMAIL_ATTACHMENTS`: the most a job may request (`metadata` lets jobs ask for `off` or
   `metadata`, and so on).
 - Polling and initial-sync settings are ignored.

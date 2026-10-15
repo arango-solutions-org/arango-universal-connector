@@ -20,7 +20,7 @@ from arango_connector.sources.gmail.operations import (
     attachment_bytes,
     attachment_envelopes,
 )
-from arango_connector.sources.jira.operations import comment_envelopes
+from arango_connector.sources.jira.operations import comment_envelopes, scoped_jql
 from arango_connector.sources.slack.operations import UserNames
 from gmail_fakes import FakeGmailClient, attachment, message, part, with_part_ids
 from jira_fakes import SITE, FakeJiraClient, comment, issue
@@ -166,3 +166,24 @@ def test_bots_and_authorless_messages_are_left_alone() -> None:
     assert names.fill(bot) is bot
     assert names.fill(_envelope(author_id=None)).payload.author_name is None
     assert lookup.calls == []
+
+
+@pytest.mark.parametrize(
+    ("jql", "expected"),
+    [
+        ("status = Done", 'project in ("P") AND (status = Done)'),
+        (
+            'summary ~ "a) OR (b" ORDER BY key',
+            'project in ("P") AND (summary ~ "a) OR (b") ORDER BY key',
+        ),
+        ("ORDER BY updated", 'project in ("P") ORDER BY updated'),
+    ],
+)
+def test_scoped_jql(jql: str, expected: str) -> None:
+    assert scoped_jql(jql, ["P"]) == expected
+
+
+@pytest.mark.parametrize("jql", ["x) OR (project = SECRET", "x OR project = SECRET)", "(x"])
+def test_scoped_jql_rejects_queries_that_could_escape_the_scope(jql: str) -> None:
+    with pytest.raises(ValueError, match="unbalanced"):
+        scoped_jql(jql, ["P"])

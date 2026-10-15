@@ -191,6 +191,12 @@ def test_results_outside_the_scope_are_dropped_even_if_jira_returns_them(
     assert "3" not in [e.source_id for e in result]
 
 
+def test_search_that_closes_the_scope_parenthesis_is_refused(jira: FakeJiraClient) -> None:
+    with pytest.raises(JobError, match="invalid query: unbalanced"):
+        run(jira_link(jira), operation="search", query="x) OR (project = SECRET")
+    assert jira.jqls == []
+
+
 def test_search_limit_and_comments_toggle(jira: FakeJiraClient) -> None:
     result = run(
         jira_link(jira), operation="search", query="x", max_results=1, include_comments=False
