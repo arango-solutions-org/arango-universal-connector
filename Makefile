@@ -21,7 +21,7 @@ TEST_DB_ENV := ARANGO_HOSTS=$(TEST_DB_URL) ARANGO_PASSWORD=$(TEST_DB_PASSWORD) A
 
 .PHONY: help install lint format format-check typecheck test test-integration test-all check \
 	test-db-up test-db-down run build up down logs reconcile-expiry gmail-auth clean \
-	docs-gen docs-check wiki-build protos platform-up platform-down platform-status platform-forward \
+	docs-gen docs-check wiki-build protos link-image link-e2e platform-up platform-down platform-status platform-forward \
 	platform-load
 
 help: ## Show this help
@@ -63,6 +63,12 @@ check: lint format-check typecheck docs-check test ## Everything CI should pass 
 
 protos: ## Regenerate the Links gRPC stubs from packages/links/proto
 	uv run python tools/gen_protos.py
+
+link-image: _require-container ## Build the Links image (arango-connector-link:dev)
+	$(CONTAINER) build -f packages/links/Dockerfile -t arango-connector-link:dev .
+
+link-e2e: ## End-to-end: run a job on the local platform through the selftest link
+	dev/link-e2e.sh
 
 # -- docs -----------------------------------------------------------------
 

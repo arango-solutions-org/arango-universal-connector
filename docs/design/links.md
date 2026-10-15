@@ -126,11 +126,34 @@ source (fetch these messages, this thread, this page of issues) that both runtim
 
 ### Packaging *(agreed)*
 
-One Helm chart per link, following the documented layout: `ArangoPlatformLink`
-(`type: Active`, description, tags, schema, version), `ArangoRoute`
-(`/link/<name>/` → `/_integration/connector/v1/`), a Deployment with the sidecar-injection
-labels, and an `ArangoProfile` setting `INTEGRATION_LINK_V1_CONNECTOR_ID`. Images and
-charts are built in CI; publishing them to a registry is a follow-up.
+One Helm chart, `charts/arango-connector-link`, parameterised by `link` (`gmail`,
+`selftest`), following the documented layout: `ArangoPlatformLink` (`type: Active`),
+`ArangoRoute` (`/link/<release>/` → `/_integration/connector/v1/`), a Service for the
+route's destination, a Deployment with the sidecar-injection labels, and an
+`ArangoProfile` setting `INTEGRATION_LINK_V1_CONNECTOR_ID`. That ID is a UUID the sidecar
+uses to namespace the link's job queue; the chart derives a stable one from the release
+name unless `linkId` is set. Each link's description, tags and input schema are generated
+from the link class into `schemas/<link>.json` (`make docs-gen`; drift-checked in CI).
+Images and charts are built in CI; publishing them to a registry is a follow-up.
+
+The `selftest` link has no external source. It returns synthetic records, so a
+deployment's wiring can be checked before configuring a real source.
+
+### What kube-arangodb 1.4.5 actually does *(found on a real cluster)*
+
+The published docs describe a slightly newer platform than the 1.4.5 operator we test
+against. The chart and runtime follow what 1.4.5 accepts:
+
+- **`ArangoPlatformLink` spec has only `type`, `deployment`, `route` and `description`.**
+  `tags`, `schema` and `version` are rejected. The chart adds them only with
+  `linkSpec.extended=true`. The link still registers its tags and schemas at startup
+  through `UpdateInfo`, which is what AI tools read.
+- **`ArangoRoute` resolves `destination.service.port` (a string) by port name**, so the
+  route points at the Service's `integration` port, not `9193`.
+- **The platform does not validate job input against the schema**, so the link always
+  validates it itself and fails the job with the validation message.
+- **Route changes reach the gateway after a short delay** (mounted config maps sync in
+  about a minute), while the deployment shows `GatewayConfig=False`.
 
 ### Docs *(agreed)*
 
@@ -145,8 +168,10 @@ the wiki show exactly what AI tools see.
   `LinkV1Internal` gRPC service.
 - `make platform-up` (`dev/platform.sh`) creates a local kind cluster on Podman with the
   Enterprise operator, ArangoDB and platform storage, using a dev license from
-  `ARANGO_LICENSE_KEY`. Link charts are installed into it and exercised end to end:
-  `Ready`, listed in `/_inventory`, job submitted, `Completed`, results readable.
+  `ARANGO_LICENSE_KEY`.
+- `make link-e2e` (`dev/link-e2e.sh`) builds the links image, loads it into the cluster,
+  installs the chart with the `selftest` link, submits a job through the gateway as an
+  AI tool would, waits for `Completed`, and verifies the JSONL result in StorageV2.
 
 ## Out of scope
 

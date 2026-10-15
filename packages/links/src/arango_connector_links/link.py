@@ -80,11 +80,13 @@ class Link[I](ABC):
             raise JobError(f"invalid input: {exc}") from None
         return parsed
 
-    def input_schema(self) -> dict[str, Any]:
-        schema: dict[str, Any] = TypeAdapter(self.input_type).json_schema()
+    @classmethod
+    def input_schema(cls) -> dict[str, Any]:
+        schema: dict[str, Any] = TypeAdapter(cls.input_type).json_schema()
         return schema
 
-    def output_schema(self) -> dict[str, Any]:
+    @classmethod
+    def output_schema(cls) -> dict[str, Any]:
         """One ``Envelope`` per JSONL line."""
         return {
             "type": "string",

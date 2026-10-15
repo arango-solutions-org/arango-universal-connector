@@ -1,0 +1,34 @@
+{
+  "description": "Diagnostic link with no external source: returns `count` message documents containing `text`, to check that jobs and results work on this platform.",
+  "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "count": {
+        "default": 1,
+        "description": "Documents to return.",
+        "maximum": 10000,
+        "minimum": 0,
+        "title": "Count",
+        "type": "integer"
+      },
+      "operation": {
+        "const": "echo",
+        "default": "echo",
+        "title": "Operation",
+        "type": "string"
+      },
+      "text": {
+        "default": "hello from the connector",
+        "maxLength": 10000,
+        "title": "Text",
+        "type": "string"
+      }
+    },
+    "title": "Echo",
+    "type": "object"
+  },
+  "tags": [
+    "diagnostic",
+    "test"
+  ]
+}

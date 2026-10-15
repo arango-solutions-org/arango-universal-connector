@@ -20,7 +20,9 @@ from arango_connector.sources.gmail.operations import (
     LabelFilter,
     after_query,
     attachment_envelopes,
+    qualifies,
     resolve_labels,
+    thread_messages,
 )
 from arango_connector_standalone.sources.base import EmitFn
 from arango_connector_standalone.sources.polling import PollingSourceAdapter
@@ -319,15 +321,8 @@ class GmailPollingAdapter(PollingSourceAdapter):
         threads: dict[str, list[dict[str, Any]]],
     ) -> bool:
         """Whether a (non-excluded) message carries, or its thread carries, a watched label."""
-        if labels.included(message.get("labelIds") or []):
-            return True
-        if self._label_match != "thread":
-            return False
-        # Only messages that are not themselves excluded can qualify their thread, so a
-        # labelled message sitting in spam does not pull in its conversation.
-        return any(
-            labels.matches(sibling.get("labelIds") or [])
-            for sibling in self._thread(client, threads, message)
+        return qualifies(
+            client, labels, message, match_thread=self._label_match == "thread", threads=threads
         )
 
     def _thread(
@@ -336,10 +331,7 @@ class GmailPollingAdapter(PollingSourceAdapter):
         threads: dict[str, list[dict[str, Any]]],
         message: dict[str, Any],
     ) -> list[dict[str, Any]]:
-        thread_id = str(message.get("threadId") or message["id"])
-        if thread_id not in threads:
-            threads[thread_id] = client.get_thread_messages(thread_id)
-        return threads[thread_id]
+        return thread_messages(client, threads, message)
 
     def _save_cursor(self, mailbox: _Mailbox, history_id: str, synced_at: datetime) -> None:
         self._state.put(

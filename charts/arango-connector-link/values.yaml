@@ -1,0 +1,40 @@
+# Which link this release runs: gmail | selftest.
+link: selftest
+
+arangodb_platform:
+  deployment:
+    # The ArangoDeployment to attach to. Populated by ArangoPlatformService or --set.
+    name: ""
+
+linkSpec:
+  # kube-arangodb 1.4.5's ArangoPlatformLink takes type, deployment, route and description.
+  # Set true on operators whose CRD also takes tags, schema and version. Either way the
+  # link registers its tags and schemas with the platform at startup.
+  extended: false
+
+# Stable UUID identifying this link's job queue. Leave empty to derive one from the
+# release name (stable across upgrades); set it to keep jobs when renaming a release.
+linkId: ""
+
+image:
+  repository: arango-connector-link
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+replicas: 1
+
+# Environment for the link: the source's settings (e.g. GMAIL_MAILBOXES, GMAIL_LABELS),
+# which also set the scope jobs may touch. See docs/sources/<link>.md.
+env: {}
+
+# Kubernetes Secret with credentials, mounted read-only at /secrets/<link>
+# (e.g. the Gmail service account key or OAuth token files). Leave empty for selftest.
+credentialsSecret: ""
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

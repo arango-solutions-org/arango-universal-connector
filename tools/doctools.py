@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 import posixpath
 import re
 import sys
@@ -37,6 +38,7 @@ from arango_connector_standalone.config import CoreSettings
 from arango_connector_standalone.registry import SOURCES
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+CHART_SCHEMAS = Path("charts/arango-connector-link/schemas")
 SOURCES_DIR = Path("docs/sources")
 
 # Files whose generated regions are maintained, relative to the repo root.
@@ -215,9 +217,31 @@ def regenerate(text: str, file: Path) -> str:
     return _REGION_RE.sub(replace, text)
 
 
+def chart_schemas() -> dict[Path, str]:
+    """The Helm chart's per-link definitions, from the link classes themselves."""
+    from arango_connector_links.main import link_types
+
+    files = {}
+    for name, cls in sorted(link_types().items()):
+        info = {
+            "description": cls.description,
+            "tags": list(cls.tags),
+            "input_schema": cls.input_schema(),
+        }
+        files[CHART_SCHEMAS / f"{name}.json"] = json.dumps(info, indent=2, sort_keys=True) + "\n"
+    return files
+
+
 def generate(root: Path = REPO_ROOT, *, write: bool = True) -> list[Path]:
-    """Rewrite generated regions. Returns the files that changed (or would change)."""
+    """Rewrite generated regions and files. Returns those that changed (or would change)."""
     changed = []
+    for rel, content in chart_schemas().items():
+        path = root / rel
+        if not path.is_file() or path.read_text(encoding="utf-8") != content:
+            changed.append(rel)
+            if write:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
     for rel in GENERATED_FILES:
         path = root / rel
         text = path.read_text(encoding="utf-8")

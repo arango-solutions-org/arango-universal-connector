@@ -63,6 +63,43 @@ def resolve_labels(
     return frozenset(resolved), unknown
 
 
+def thread_messages(
+    client: GmailClient, threads: dict[str, list[dict[str, Any]]], message: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """The message's thread as ``{id, labelIds}`` entries, cached in ``threads``."""
+    thread_id = str(message.get("threadId") or message["id"])
+    if thread_id not in threads:
+        threads[thread_id] = client.get_thread_messages(thread_id)
+    return threads[thread_id]
+
+
+def qualifies(
+    client: GmailClient,
+    labels: LabelFilter,
+    message: dict[str, Any],
+    *,
+    match_thread: bool,
+    threads: dict[str, list[dict[str, Any]]],
+) -> bool:
+    """Whether a message passes the label filter.
+
+    Excluded labels always apply to the message itself. With ``match_thread``, a message
+    also qualifies when another non-excluded message in its thread carries a watched
+    label (a labelled message sitting in spam does not qualify its thread).
+    """
+    own = message.get("labelIds") or []
+    if labels.excluded(own):
+        return False
+    if labels.included(own):
+        return True
+    if not match_thread:
+        return False
+    return any(
+        labels.matches(sibling.get("labelIds") or [])
+        for sibling in thread_messages(client, threads, message)
+    )
+
+
 def attachment_bytes(
     client: GmailClient,
     message: dict[str, Any],
