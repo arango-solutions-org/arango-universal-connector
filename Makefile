@@ -21,7 +21,8 @@ TEST_DB_ENV := ARANGO_HOSTS=$(TEST_DB_URL) ARANGO_PASSWORD=$(TEST_DB_PASSWORD) A
 
 .PHONY: help install lint format format-check typecheck test test-integration test-all check \
 	test-db-up test-db-down run build up down logs reconcile-expiry gmail-auth clean \
-	docs-gen docs-check wiki-build
+	docs-gen docs-check wiki-build platform-up platform-down platform-status platform-forward \
+	platform-load
 
 help: ## Show this help
 	@echo "Usage: make <target> [VAR=value]"
@@ -87,6 +88,25 @@ test-db-up: _require-container ## Start the disposable test ArangoDB and wait un
 
 test-db-down: _require-container ## Stop and remove the disposable test ArangoDB
 	-$(CONTAINER) rm -f $(TEST_DB_NAME)
+
+# -- local ArangoDB Platform (for Links) -----------------------------------
+# kind + Podman cluster with the Enterprise operator, ArangoDB and platform storage.
+# Needs ARANGO_LICENSE_KEY; see dev/platform.sh.
+
+platform-up: ## Create the local Links test platform (kind + Podman; needs ARANGO_LICENSE_KEY)
+	dev/platform.sh up
+
+platform-down: ## Delete the local platform cluster
+	dev/platform.sh down
+
+platform-status: ## Show the local platform's resources
+	dev/platform.sh status
+
+platform-forward: ## Port-forward the platform's ArangoDB to https://localhost:8529
+	dev/platform.sh forward
+
+platform-load: ## Load a local image into the platform cluster (IMAGE=name:tag)
+	dev/platform.sh load $(IMAGE)
 
 # -- running --------------------------------------------------------------
 
