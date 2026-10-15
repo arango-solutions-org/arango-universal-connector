@@ -21,7 +21,7 @@ TEST_DB_ENV := ARANGO_HOSTS=$(TEST_DB_URL) ARANGO_PASSWORD=$(TEST_DB_PASSWORD) A
 
 .PHONY: help install lint format format-check typecheck test test-integration test-all check \
 	test-db-up test-db-down run build up down logs reconcile-expiry gmail-auth clean \
-	docs-gen docs-check wiki-build platform-up platform-down platform-status platform-forward \
+	docs-gen docs-check wiki-build protos platform-up platform-down platform-status platform-forward \
 	platform-load
 
 help: ## Show this help
@@ -58,6 +58,11 @@ test-integration: test-db-up ## Run integration tests against a disposable Arang
 test-all: test test-integration ## Run unit and integration tests
 
 check: lint format-check typecheck docs-check test ## Everything CI should pass (no database needed)
+
+# -- links ----------------------------------------------------------------
+
+protos: ## Regenerate the Links gRPC stubs from packages/links/proto
+	uv run python tools/gen_protos.py
 
 # -- docs -----------------------------------------------------------------
 
