@@ -42,6 +42,41 @@ def build_gmail() -> Link[Any]:
     return GmailLink(gmail, client_factory)
 
 
+def build_slack() -> Link[Any]:
+    from slack_sdk import WebClient
+    from slack_sdk.http_retry.builtin_handlers import RateLimitErrorRetryHandler
+
+    from arango_connector.sources.slack.config import SlackApiSettings
+    from arango_connector_links.links.slack import SlackLink
+
+    slack = load_settings(SlackApiSettings)
+
+    def client_factory() -> Any:
+        client = WebClient(token=slack.slack_bot_token.get_secret_value())
+        client.retry_handlers.append(RateLimitErrorRetryHandler(max_retry_count=5))
+        return client
+
+    return SlackLink(slack, client_factory)
+
+
+def build_jira() -> Link[Any]:
+    from arango_connector.sources.jira.client import JiraClient, RequestsJiraClient
+    from arango_connector.sources.jira.config import JiraSettings
+    from arango_connector_links.links.jira import JiraLink
+
+    jira = load_settings(JiraSettings)
+
+    def client_factory() -> JiraClient:
+        return RequestsJiraClient(
+            jira.jira_base_url,
+            jira.jira_email,
+            jira.jira_api_token.get_secret_value(),
+            page_size=jira.jira_page_size,
+        )
+
+    return JiraLink(jira, client_factory)
+
+
 def build_selftest() -> Link[Any]:
     from arango_connector_links.links.selftest import SelftestLink
 
@@ -51,13 +86,17 @@ def build_selftest() -> Link[Any]:
 def link_types() -> dict[str, type[Link[Any]]]:
     """Every link's class, for docs and chart generation (no settings needed)."""
     from arango_connector_links.links.gmail import GmailLink
+    from arango_connector_links.links.jira import JiraLink
     from arango_connector_links.links.selftest import SelftestLink
+    from arango_connector_links.links.slack import SlackLink
 
-    return {cls.name: cls for cls in (GmailLink, SelftestLink)}
+    return {cls.name: cls for cls in (GmailLink, SlackLink, JiraLink, SelftestLink)}
 
 
 LINKS: dict[str, Callable[[], Link[Any]]] = {
     "gmail": build_gmail,
+    "slack": build_slack,
+    "jira": build_jira,
     "selftest": build_selftest,
 }
 

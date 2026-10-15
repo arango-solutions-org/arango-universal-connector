@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, tzinfo
 from typing import Any, Protocol
+from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
@@ -79,6 +80,18 @@ class JiraClient(Protocol):
 
     def list_comments(self, issue_id: str) -> Iterator[dict[str, Any]]:
         """Yield every comment on the issue, oldest first. Nothing if the issue is gone."""
+        ...
+
+    def search_jql(self, jql: str) -> Iterator[list[dict[str, Any]]]:
+        """Yield pages of issues matching ``jql``, with the connector's issue fields."""
+        ...
+
+    def get_issue(self, key: str) -> dict[str, Any] | None:
+        """One issue by key or ID, or ``None`` if it doesn't exist or isn't visible."""
+        ...
+
+    def time_zone(self) -> tzinfo:
+        """The account's time zone, which JQL dates are interpreted in."""
         ...
 
 
@@ -158,8 +171,11 @@ class RequestsJiraClient:
         self, project: str, updated_since: datetime | None
     ) -> Iterator[list[dict[str, Any]]]:
         since = format_jql_time(updated_since, self.time_zone()) if updated_since else None
+        yield from self.search_jql(build_jql(project, since))
+
+    def search_jql(self, jql: str) -> Iterator[list[dict[str, Any]]]:
         body: dict[str, Any] = {
-            "jql": build_jql(project, since),
+            "jql": jql,
             "fields": list(ISSUE_FIELDS),
             "maxResults": self._page_size,
         }
@@ -173,6 +189,19 @@ class RequestsJiraClient:
             # cursor jump past issues never read.
             if page.get("isLast") or not token:
                 return
+
+    def get_issue(self, key: str) -> dict[str, Any] | None:
+        try:
+            return self._request(
+                # Encoded so a key can't add path segments (e.g. "../").
+                "GET",
+                f"/rest/api/3/issue/{quote(key, safe='')}",
+                params={"fields": ",".join(ISSUE_FIELDS)},
+            )
+        except JiraError as exc:
+            if exc.status == 404:
+                return None
+            raise
 
     def list_comments(self, issue_id: str) -> Iterator[dict[str, Any]]:
         start_at = 0

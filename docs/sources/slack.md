@@ -33,8 +33,8 @@ and writes every new message, thread reply and edit to Arango within seconds.
 | Variable | Default | Values | Description |
 |---|---|---|---|
 | `SLACK_BOT_TOKEN` | **required** | secret | Bot User OAuth Token (`xoxb-…`). |
-| `SLACK_APP_TOKEN` | **required** | secret | App-level token (`xapp-…`) with the `connections:write` scope. |
 | `SLACK_CHANNEL_IDS` | **required** | comma-separated | Channel IDs to watch, comma-separated, e.g. `C012,C034`. |
+| `SLACK_APP_TOKEN` | **required** | secret | App-level token (`xapp-…`) with the `connections:write` scope. |
 <!-- END GENERATED: config:slack -->
 
 Messages go to `ARANGO_COLLECTION` (default `messages`).

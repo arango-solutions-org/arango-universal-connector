@@ -1,0 +1,116 @@
+{
+  "description": "Read Slack messages: a channel's history in a time range, or a whole thread. Returns one document per message, with authors' names, as JSONL.",
+  "input_schema": {
+    "$defs": {
+      "ChannelHistory": {
+        "additionalProperties": false,
+        "description": "A channel's messages in a time range, newest first.",
+        "properties": {
+          "channel": {
+            "description": "Channel ID; must be one of the link's.",
+            "minLength": 1,
+            "title": "Channel",
+            "type": "string"
+          },
+          "latest": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Messages at or before this time.",
+            "title": "Latest"
+          },
+          "max_results": {
+            "default": 1000,
+            "description": "Messages to return.",
+            "maximum": 10000,
+            "minimum": 1,
+            "title": "Max Results",
+            "type": "integer"
+          },
+          "oldest": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Messages at or after this time.",
+            "title": "Oldest"
+          },
+          "operation": {
+            "const": "channel_history",
+            "title": "Operation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation",
+          "channel"
+        ],
+        "title": "ChannelHistory",
+        "type": "object"
+      },
+      "GetThread": {
+        "additionalProperties": false,
+        "description": "A thread's root message and every reply.",
+        "properties": {
+          "channel": {
+            "description": "Channel ID; must be one of the link's.",
+            "minLength": 1,
+            "title": "Channel",
+            "type": "string"
+          },
+          "operation": {
+            "const": "get_thread",
+            "title": "Operation",
+            "type": "string"
+          },
+          "thread_ts": {
+            "description": "The thread root message's `ts`.",
+            "minLength": 1,
+            "title": "Thread Ts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation",
+          "channel",
+          "thread_ts"
+        ],
+        "title": "GetThread",
+        "type": "object"
+      }
+    },
+    "discriminator": {
+      "mapping": {
+        "channel_history": "#/$defs/ChannelHistory",
+        "get_thread": "#/$defs/GetThread"
+      },
+      "propertyName": "operation"
+    },
+    "oneOf": [
+      {
+        "$ref": "#/$defs/ChannelHistory"
+      },
+      {
+        "$ref": "#/$defs/GetThread"
+      }
+    ]
+  },
+  "tags": [
+    "chat",
+    "slack",
+    "messages"
+  ]
+}

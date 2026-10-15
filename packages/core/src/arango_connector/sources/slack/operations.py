@@ -7,13 +7,14 @@ envelopes with ``normalize`` and fill in human authors' names with ``UserNames``
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Callable, Iterable, Iterator
+from typing import Any, Protocol
 
 from slack_sdk.errors import SlackApiError
 
 from arango_connector.envelope import Envelope
 from arango_connector.payloads import MessagePayload
+from arango_connector.sources.slack.normalize import normalize
 
 logger = logging.getLogger(__name__)
 
@@ -62,3 +63,57 @@ class UserNames:
         return envelope.model_copy(
             update={"payload": payload.model_copy(update={"author_name": name})}
         )
+
+
+class SlackApi(Protocol):
+    """The Slack Web API methods used to read history (``slack_sdk.WebClient``)."""
+
+    def conversations_history(self, **kwargs: Any) -> Any: ...
+
+    def conversations_replies(self, **kwargs: Any) -> Any: ...
+
+
+_PAGE_SIZE = 200
+
+
+def _pages(call: Callable[..., Any], **kwargs: Any) -> Iterator[dict[str, Any]]:
+    """Every message across Slack's cursor pages."""
+    cursor: str | None = None
+    while True:
+        response = call(**kwargs, limit=_PAGE_SIZE, **({"cursor": cursor} if cursor else {}))
+        yield from response.get("messages") or []
+        cursor = (response.get("response_metadata") or {}).get("next_cursor") or None
+        if not cursor:
+            return
+
+
+def channel_history(
+    client: SlackApi, channel: str, *, oldest: float | None = None, latest: float | None = None
+) -> Iterator[dict[str, Any]]:
+    """A channel's top-level messages, newest first, within ``oldest``..``latest`` (epoch)."""
+    bounds: dict[str, Any] = {"inclusive": True}
+    if oldest is not None:
+        bounds["oldest"] = f"{oldest:.6f}"
+    if latest is not None:
+        bounds["latest"] = f"{latest:.6f}"
+    yield from _pages(client.conversations_history, channel=channel, **bounds)
+
+
+def thread_replies(client: SlackApi, channel: str, thread_ts: str) -> Iterator[dict[str, Any]]:
+    """A thread's root message and its replies, oldest first."""
+    yield from _pages(client.conversations_replies, channel=channel, ts=thread_ts)
+
+
+def message_envelopes(
+    messages: Iterable[dict[str, Any]], channel: str, team_id: str | None, names: UserNames
+) -> Iterator[Envelope[MessagePayload]]:
+    """Envelopes for messages read through the Web API.
+
+    History messages don't carry their channel, so it is added before ``normalize``; the
+    same subtypes are kept or skipped as for live events.
+    """
+    for message in messages:
+        event = {**message, "type": message.get("type") or "message", "channel": channel}
+        envelope = normalize(event, team_id)
+        if envelope is not None:
+            yield names.fill(envelope)

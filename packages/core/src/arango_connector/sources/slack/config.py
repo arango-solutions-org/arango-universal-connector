@@ -1,4 +1,8 @@
-"""Settings for the Slack source. Loaded only when ``SOURCE=slack``."""
+"""Settings for the Slack source.
+
+``SlackApiSettings`` is what reading Slack's Web API needs (the Links runtime);
+``SlackSettings`` adds the Socket Mode app token the standalone listener needs.
+"""
 
 from __future__ import annotations
 
@@ -10,11 +14,8 @@ from pydantic_settings import NoDecode
 from arango_connector.config import ConnectorSettings, split_csv
 
 
-class SlackSettings(ConnectorSettings):
+class SlackApiSettings(ConnectorSettings):
     slack_bot_token: SecretStr = Field(description="Bot User OAuth Token (`xoxb-…`).")
-    slack_app_token: SecretStr = Field(
-        description="App-level token (`xapp-…`) with the `connections:write` scope."
-    )
     slack_channel_ids: Annotated[set[str], NoDecode] = Field(
         min_length=1, description="Channel IDs to watch, comma-separated, e.g. `C012,C034`."
     )
@@ -23,3 +24,9 @@ class SlackSettings(ConnectorSettings):
     @classmethod
     def _parse_csv(cls, value: Any) -> Any:
         return split_csv(value)
+
+
+class SlackSettings(SlackApiSettings):
+    slack_app_token: SecretStr = Field(
+        description="App-level token (`xapp-…`) with the `connections:write` scope."
+    )
