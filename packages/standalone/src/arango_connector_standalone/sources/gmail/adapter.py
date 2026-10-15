@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -12,13 +12,15 @@ from arango_connector.sources.gmail.client import GmailClient, HistoryExpiredErr
 from arango_connector.sources.gmail.config import InitialSync, LabelMatch
 from arango_connector.sources.gmail.normalize import (
     AttachmentOptions,
-    AttachmentPart,
     NormalizeOptions,
-    attachment_parts,
-    decode_part_data,
     mailbox_key,
     normalize,
-    normalize_attachment,
+)
+from arango_connector.sources.gmail.operations import (
+    LabelFilter,
+    after_query,
+    attachment_envelopes,
+    resolve_labels,
 )
 from arango_connector_standalone.sources.base import EmitFn
 from arango_connector_standalone.sources.polling import PollingSourceAdapter
@@ -40,24 +42,6 @@ class _Stopping(Exception):
     """Raised mid-sync when the adapter is stopping; the cursor is left untouched."""
 
 
-@dataclass(frozen=True)
-class LabelFilter:
-    """Ingest a message carrying any ``include`` label and no ``exclude`` label."""
-
-    include: frozenset[str]
-    exclude: frozenset[str]
-
-    def included(self, label_ids: Iterable[str]) -> bool:
-        return bool(self.include.intersection(label_ids))
-
-    def excluded(self, label_ids: Iterable[str]) -> bool:
-        return bool(self.exclude.intersection(label_ids))
-
-    def matches(self, label_ids: Iterable[str]) -> bool:
-        labels = list(label_ids)
-        return self.included(labels) and not self.excluded(labels)
-
-
 @dataclass
 class _Changes:
     """What history reported since the cursor, in order of first appearance."""
@@ -69,27 +53,6 @@ class _Changes:
     relabelled: set[str] = field(default_factory=set)
     # Labels added per message, to spot a watched label being newly applied.
     labels_added: dict[str, set[str]] = field(default_factory=dict)
-
-
-def resolve_labels(
-    configured: Iterable[str], available: list[dict[str, Any]]
-) -> tuple[frozenset[str], list[str]]:
-    """Map configured label IDs or names (case-insensitive) to this mailbox's label IDs.
-
-    Returns the resolved IDs and the entries that matched nothing. User label IDs
-    (``Label_123``) differ per mailbox, which is why names are accepted too.
-    """
-    by_id = {str(label["id"]): str(label["id"]) for label in available}
-    by_name = {str(label.get("name", "")).lower(): str(label["id"]) for label in available}
-    resolved: set[str] = set()
-    unknown: list[str] = []
-    for entry in configured:
-        label_id = by_id.get(entry) or by_name.get(entry.lower())
-        if label_id is None:
-            unknown.append(entry)
-        else:
-            resolved.add(label_id)
-    return frozenset(resolved), unknown
 
 
 @dataclass
@@ -189,7 +152,7 @@ class GmailPollingAdapter(PollingSourceAdapter):
             # the next history poll rather than falling between the two.
             history_id = str(client.get_profile()["historyId"])
             since = datetime.fromisoformat(str(cursor["last_synced_at"])) - GAP_OVERLAP
-            added = list(client.list_message_ids(_after_query(since)))
+            added = list(client.list_message_ids(after_query(since)))
             self._ingest(mailbox, client, labels, _Changes(ids=added, added=set(added)), emit)
         else:
             self._ingest(mailbox, client, labels, changes, emit)
@@ -207,7 +170,7 @@ class GmailPollingAdapter(PollingSourceAdapter):
         history_id = str(client.get_profile()["historyId"])
         if self._initial_sync == "lookback":
             since = started_at - self._initial_lookback
-            ids = list(client.list_message_ids(_after_query(since)))
+            ids = list(client.list_message_ids(after_query(since)))
             logger.info(
                 "gmail_initial_lookback mailbox=%s since=%s messages=%s",
                 mailbox.key,
@@ -330,44 +293,23 @@ class GmailPollingAdapter(PollingSourceAdapter):
         updated_at: datetime | None,
         emit: EmitFn,
     ) -> int:
-        """Emit one envelope per attachment of ``message``; returns how many."""
-        count = 0
-        for part in attachment_parts(message):
-            data, skipped_reason = self._attachment_bytes(client, message, part)
-            emit(
-                normalize_attachment(
-                    message,
-                    part,
-                    mailbox.address,
-                    self._options,
-                    self._attachments,
-                    data=data,
-                    skipped_reason=skipped_reason,
-                    updated_at=updated_at,
-                )
-            )
-            count += 1
-        return count
-
-    def _attachment_bytes(
-        self, client: GmailClient, message: dict[str, Any], part: AttachmentPart
-    ) -> tuple[bytes | None, str | None]:
-        """The attachment's bytes when the mode needs them, else why there are none.
+        """Emit one envelope per attachment of ``message``; returns how many.
 
         A transient API error propagates, failing this mailbox's sync so the next poll
         retries from the same cursor.
         """
-        if not self._attachments.needs_bytes:
-            return None, None
-        if part.size > self._attachments.max_bytes:
-            return None, "too_large"
-        if part.data:
-            return decode_part_data(part.data), None
-        if part.attachment_id:
-            data = client.get_attachment(str(message["id"]), part.attachment_id)
-            if data is not None:
-                return data, None
-        return None, "download_failed"
+        count = 0
+        for envelope in attachment_envelopes(
+            client,
+            message,
+            mailbox.address,
+            self._options,
+            self._attachments,
+            updated_at=updated_at,
+        ):
+            emit(envelope)
+            count += 1
+        return count
 
     def _qualifies(
         self,
@@ -426,8 +368,3 @@ class GmailPollingAdapter(PollingSourceAdapter):
                 )
             mailbox.labels = LabelFilter(include, exclude)
         return mailbox.labels
-
-
-def _after_query(since: datetime) -> str:
-    """A Gmail search for mail received after ``since`` (epoch seconds, UTC)."""
-    return f"after:{int(since.timestamp())}"

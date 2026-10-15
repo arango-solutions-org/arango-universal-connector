@@ -11,11 +11,10 @@ from typing import Any
 from arango_connector.sources.jira.client import JiraClient, JiraInterrupted
 from arango_connector.sources.jira.config import InitialSync
 from arango_connector.sources.jira.normalize import (
-    embedded_comments,
-    normalize_comment,
     normalize_issue,
     parse_jira_datetime,
 )
+from arango_connector.sources.jira.operations import comment_envelopes
 from arango_connector_standalone.sources.base import EmitFn
 from arango_connector_standalone.sources.polling import PollingSourceAdapter
 from arango_connector_standalone.state.base import StateStore
@@ -196,19 +195,8 @@ class JiraPollingAdapter(PollingSourceAdapter):
         since: datetime | None,
         emit: EmitFn,
     ) -> int:
-        comments, total = embedded_comments(issue)
-        if total > len(comments):
-            # Search results only embed the first page of comments.
-            comments = list(client.list_comments(str(issue["id"])))
         emitted = 0
-        for comment in comments:
-            if since is not None:
-                updated = parse_jira_datetime(comment.get("updated") or comment.get("created"))
-                if updated is not None and updated < since:
-                    continue
-            envelope = normalize_comment(comment, issue, self._site)
-            if envelope is None:
-                continue
+        for envelope in comment_envelopes(client, issue, self._site, since=since):
             emit(envelope)
             emitted += 1
         return emitted

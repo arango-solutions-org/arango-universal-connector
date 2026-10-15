@@ -8,9 +8,9 @@ from typing import Any
 
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-from slack_sdk.errors import SlackApiError
 
 from arango_connector.sources.slack.normalize import normalize
+from arango_connector.sources.slack.operations import UserNames
 from arango_connector_standalone.sources.base import EmitFn, SourceAdapter
 
 logger = logging.getLogger(__name__)
@@ -32,14 +32,12 @@ class SlackSocketModeAdapter(SourceAdapter):
         self._emit: EmitFn | None = None
         self._handler: SocketModeHandler | None = None
         self._stopped = threading.Event()
-        # TODO(future): refresh on "user_change" events; a renamed user keeps the old
-        # name until restart.
-        self._user_names: dict[str, str | None] = {}
-
         # Every write replaces the whole document, so events must be handled in the order
         # Slack sent them: listeners run inline (here) on one Socket Mode worker (start()).
         self.app = App(token=bot_token, process_before_response=True)
         self.app.event("message")(self._on_message)
+        # Looked up through self.app.client at call time, so the client can be replaced.
+        self._user_names = UserNames(lambda **kwargs: self.app.client.users_info(**kwargs))
 
     def _on_message(self, event: dict[str, Any], body: dict[str, Any]) -> None:
         """Bolt listener. Catches everything so one bad event never kills the listener."""
@@ -54,12 +52,7 @@ class SlackSocketModeAdapter(SourceAdapter):
                     "slack_event_skipped channel=%s subtype=%s", channel, event.get("subtype")
                 )
                 return
-            payload = envelope.payload
-            if payload.author_type == "user" and payload.author_id:
-                name = self._resolve_user_name(payload.author_id)
-                envelope = envelope.model_copy(
-                    update={"payload": payload.model_copy(update={"author_name": name})}
-                )
+            envelope = self._user_names.fill(envelope)
             if self._emit is None:
                 logger.warning("slack_event_dropped reason=not_started key=%s", envelope.key)
                 return
@@ -68,29 +61,6 @@ class SlackSocketModeAdapter(SourceAdapter):
             logger.exception(
                 "slack_event_handler_failed channel=%s ts=%s", event.get("channel"), event.get("ts")
             )
-
-    def _resolve_user_name(self, user_id: str) -> str | None:
-        """Return the user's ``real_name`` via ``users.info``, cached per user.
-
-        A failed lookup returns ``None`` without caching, so the message is still
-        stored and the next message from that user retries.
-        """
-        if user_id in self._user_names:
-            return self._user_names[user_id]
-        try:
-            response = self.app.client.users_info(user=user_id)
-        except SlackApiError as exc:
-            logger.warning(
-                "slack_user_lookup_failed user=%s error=%s", user_id, exc.response.get("error")
-            )
-            return None
-        except Exception:
-            logger.warning("slack_user_lookup_failed user=%s", user_id, exc_info=True)
-            return None
-        user = response.get("user") or {}
-        name = user.get("real_name") or (user.get("profile") or {}).get("real_name") or None
-        self._user_names[user_id] = name
-        return name
 
     def start(self, emit: EmitFn) -> None:
         """Connect over Socket Mode and block until :meth:`stop` is called.

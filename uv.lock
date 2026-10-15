@@ -56,6 +56,7 @@ dependencies = [
     { name = "pypdf" },
     { name = "python-docx" },
     { name = "requests" },
+    { name = "slack-sdk" },
     { name = "tzdata" },
 ]
 
@@ -69,6 +70,7 @@ requires-dist = [
     { name = "pypdf", specifier = ">=6.19.0" },
     { name = "python-docx", specifier = ">=1.2.0" },
     { name = "requests", specifier = ">=2.31" },
+    { name = "slack-sdk", specifier = ">=3.27" },
     { name = "tzdata", specifier = ">=2024.1" },
 ]
 
