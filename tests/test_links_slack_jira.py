@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from slack_sdk.errors import SlackApiError
 
+from arango_connector.sources.jira.client import JiraAuthError, JiraError
 from arango_connector.sources.jira.config import JiraSettings
 from arango_connector.sources.slack.config import SlackApiSettings
 from arango_connector_links.link import RESULT_FILE, JobContext, JobError, Link
@@ -101,10 +102,12 @@ def test_channel_history_time_range_and_limit() -> None:
         operation="channel_history",
         channel=CHAN,
         oldest=datetime.fromtimestamp(1716500003, tz=UTC).isoformat(),
+        latest=datetime.fromtimestamp(1716500008, tz=UTC).isoformat(),
         max_results=2,
     )
     assert [e.source_id for e in result] == ["1716500003.000000", "1716500004.000000"]
     assert slack.calls[0][1]["oldest"] == "1716500003.000000"
+    assert slack.calls[0][1]["latest"] == "1716500008.000000"
 
 
 def test_joins_and_other_subtypes_are_skipped() -> None:
@@ -232,6 +235,25 @@ def test_export_builds_a_range_query(jira: FakeJiraClient) -> None:
         'project in ("PROJ") AND (updated >= "2026/10/01 00:00" AND '
         'updated < "2026/10/15 12:30") ORDER BY updated ASC, key ASC'
     ]
+
+
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (JiraAuthError(401, "Unauthorized"), "Jira rejected the link's credentials or permissions"),
+        (JiraError(400, "bad field"), "Jira rejected the query: HTTP 400: bad field"),
+    ],
+)
+def test_jira_errors_become_job_errors(
+    jira: FakeJiraClient, monkeypatch: pytest.MonkeyPatch, error: Exception, message: str
+) -> None:
+    def fail(jql: str) -> Iterator[list[dict[str, Any]]]:
+        raise error
+
+    monkeypatch.setattr(jira, "search_jql", fail)
+    with pytest.raises(JobError) as caught:
+        run(jira_link(jira), operation="search", query="x")
+    assert str(caught.value) == message
 
 
 def test_export_project_scope(jira: FakeJiraClient) -> None:

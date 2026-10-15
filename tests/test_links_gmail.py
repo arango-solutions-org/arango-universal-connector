@@ -176,6 +176,8 @@ def test_attachments_are_included_when_requested(gmail: FakeGmailClient) -> None
     result = run(link(gmail), operation="search", mailbox=ADA, query="x", attachments="text")
     assert [e.kind for e in result] == ["email", "attachment"]
     assert result[1].payload.text == "hi"
+    default = run(link(gmail), operation="search", mailbox=ADA, query="x")
+    assert [e.kind for e in default] == ["email"]  # attachments are off unless asked for
 
 
 @pytest.mark.parametrize(

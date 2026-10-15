@@ -68,8 +68,8 @@ def scoped_jql(jql: str, projects: Iterable[str]) -> str:
 
 def _last_order_by(jql: str) -> int | None:
     """Where the query's own ``ORDER BY`` starts, ignoring text inside quotes."""
-    matches = list(_ORDER_BY.finditer(_outside_quotes(jql)))
-    return matches[-1].start() if matches else None
+    match = _ORDER_BY.search(_outside_quotes(jql))
+    return match.start() if match else None
 
 
 def _balanced(text: str) -> bool:

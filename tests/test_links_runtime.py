@@ -179,7 +179,7 @@ def test_cancellation_mid_run_stops_without_uploading(server: SidecarServer) -> 
 
     assert job.state == S.JOB_STATE_CANCELLED
     assert RESULT_FILE not in job.files
-    assert "COMPLETED" not in job.state_names()
+    assert job.rejected == []  # it didn't try to fail or complete a cancelled job
 
 
 def test_already_cancelled_job_is_skipped(server: SidecarServer) -> None:
@@ -189,6 +189,7 @@ def test_already_cancelled_job_is_skipped(server: SidecarServer) -> None:
     server.sidecar.cancel(picked.id)
     rt.process(picked.id)
     assert job.state_names() == ["PENDING", "SCHEDULED", "CANCELLED"]
+    assert job.rejected == []  # never even tried RUNNING
 
 
 def test_timeout_fails_the_job(server: SidecarServer) -> None:
@@ -216,8 +217,43 @@ def test_stopping_mid_job_fails_it_for_resubmission(server: SidecarServer) -> No
     assert RESULT_FILE not in job.files
 
 
-def test_unreadable_claimed_job_does_not_crash_the_loop(server: SidecarServer) -> None:
-    runtime(server).process("no-such-job")  # GetJob fails; the failure is logged, not raised
+def test_claimed_job_that_cannot_be_read_is_failed(server: SidecarServer) -> None:
+    job = server.sidecar.submit(b'{"count": 1}')
+    server.sidecar.unreadable.add(job.id)
+    runtime(server).run_once()
+    assert job.state_names() == ["PENDING", "SCHEDULED", "FAILED"]
+    assert job.descriptions[-1] == "could not read the job (UNAVAILABLE); resubmit it"
+
+
+def test_cancellation_after_the_last_record_is_still_noticed(server: SidecarServer) -> None:
+    class CancelsAfterYielding(EchoLink):
+        def run(self, job_input: EchoInput, ctx: JobContext) -> Iterator[Envelope[Any]]:
+            yield from super().run(job_input, ctx)
+            server.sidecar.cancel(job.id)  # e.g. while skipping messages that don't qualify
+
+    job = server.sidecar.submit(b'{"count": 1}')
+    runtime(server, CancelsAfterYielding(), cancel_check_interval=0).run_once()
+    assert job.state == S.JOB_STATE_CANCELLED
+    assert RESULT_FILE not in job.files
+
+
+def test_long_failure_descriptions_are_truncated(server: SidecarServer) -> None:
+    job = server.sidecar.submit(json.dumps({"fail": "x" * 5000}).encode())
+    runtime(server).run_once()
+    assert job.descriptions[-1] == "x" * 1000
+
+
+def test_cancellation_is_polled_at_most_once_per_interval(server: SidecarServer) -> None:
+    clock = [0.0]
+
+    def tick(n: int) -> None:
+        clock[0] += 1  # one record per second
+
+    server.sidecar.submit(b'{"count": 20}')
+    LinkRuntime(
+        EchoLink(on_item=tick), server.stub, cancel_check_interval=5, clock=lambda: clock[0]
+    ).run_once()
+    assert server.sidecar.get_job_calls == 1 + 4  # the initial read, then at 5s, 10s, 15s, 20s
 
 
 def test_run_forever_processes_jobs_until_stopped(server: SidecarServer) -> None:

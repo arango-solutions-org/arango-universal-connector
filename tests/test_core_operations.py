@@ -177,10 +177,15 @@ def test_bots_and_authorless_messages_are_left_alone() -> None:
             'project in ("P") AND (summary ~ "a) OR (b") ORDER BY key',
         ),
         ("ORDER BY updated", 'project in ("P") ORDER BY updated'),
+        (r'summary ~ "say \"hi) there\""', r'project in ("P") AND (summary ~ "say \"hi) there\"")'),
     ],
 )
 def test_scoped_jql(jql: str, expected: str) -> None:
     assert scoped_jql(jql, ["P"]) == expected
+
+
+def test_scoped_jql_escapes_project_keys() -> None:
+    assert scoped_jql("x", ['A"B']) == r'project in ("A\"B") AND (x)'
 
 
 @pytest.mark.parametrize("jql", ["x) OR (project = SECRET", "x OR project = SECRET)", "(x"])

@@ -36,6 +36,7 @@ class FakeJob:
     states: list[int] = field(default_factory=lambda: [S.JOB_STATE_PENDING])
     descriptions: list[str] = field(default_factory=lambda: [""])
     files: dict[str, bytes] = field(default_factory=dict)
+    rejected: list[str] = field(default_factory=list)  # status updates refused (finished job)
 
     @property
     def state(self) -> int:
@@ -52,6 +53,8 @@ class FakeSidecar(internal_pb2_grpc.LinkV1InternalServicer):
         self.unavailable_for = 0  # UpdateInfo calls to fail before succeeding
         self._lock = threading.Lock()
         self.upload_chunks: list[internal_pb2.BatchUploadFileRequest] = []
+        self.get_job_calls = 0
+        self.unreadable: set[str] = set()  # job IDs whose GetJob fails
 
     # -- test helpers ----------------------------------------------------------------
 
@@ -97,6 +100,9 @@ class FakeSidecar(internal_pb2_grpc.LinkV1InternalServicer):
         return internal_pb2.PickUpJobResponse()
 
     def GetJob(self, request: external_pb2.GetJobRequest, context: Any) -> job_pb2.Job:
+        self.get_job_calls += 1
+        if request.id in self.unreadable:
+            context.abort(grpc.StatusCode.UNAVAILABLE, "sidecar hiccup")
         job = self.jobs.get(request.id)
         if job is None:
             context.abort(grpc.StatusCode.NOT_FOUND, "no such job")
@@ -107,6 +113,7 @@ class FakeSidecar(internal_pb2_grpc.LinkV1InternalServicer):
     ) -> internal_pb2.UpdateJobStatusResponse:
         job = self.jobs[request.id]
         if job.state in (S.JOB_STATE_CANCELLED, S.JOB_STATE_COMPLETED, S.JOB_STATE_FAILED):
+            job.rejected.append(S.JobState.Name(request.status.state))
             context.abort(grpc.StatusCode.FAILED_PRECONDITION, "invalid transition")
         job.states.append(request.status.state)
         job.descriptions.append(request.status.description)
