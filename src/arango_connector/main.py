@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import sys
 from types import FrameType
@@ -50,6 +51,8 @@ def configure_logging(level: str) -> None:
 
 def main() -> int:
     """Run the connector. Returns a process exit code."""
+    # Files we create (the dead-letter file holds full message content) are owner-only.
+    os.umask(0o077)
     try:
         settings = load_settings(CoreSettings)
     except ConfigError as exc:
@@ -77,7 +80,9 @@ def main() -> int:
 
     def _on_signal(signum: int, _frame: FrameType | None) -> None:
         logger.info("signal_received signal=%s", signal.Signals(signum).name)
-        pipeline.shutdown()
+        # Only stop the source here: the sink and state store must stay open until the
+        # source loop has returned, then main() shuts the pipeline down.
+        pipeline.source.stop()
 
     signal.signal(signal.SIGINT, _on_signal)
     signal.signal(signal.SIGTERM, _on_signal)

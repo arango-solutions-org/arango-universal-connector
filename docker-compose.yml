@@ -1,3 +1,14 @@
+# What every connector service shares; each service adds its profile and environment.
+x-connector: &connector
+  build: .
+  env_file: .env
+  depends_on:
+    arangodb:
+      condition: service_healthy
+  volumes:
+    - connector_data:/data
+  restart: unless-stopped
+
 services:
   arangodb:
     image: arangodb:3.12
@@ -15,24 +26,20 @@ services:
       retries: 30
       start_period: 10s
 
+  # Each source has its own profile, so SOURCE in .env (used by local runs) can never
+  # start a second process on the same cursor. Start it with: docker compose --profile slack up -d
   connector:
-    build: .
-    env_file: .env
+    <<: *connector
+    profiles: ["slack"]
     environment:
+      SOURCE: slack
       ARANGO_HOSTS: http://arangodb:8529
-    depends_on:
-      arangodb:
-        condition: service_healthy
-    volumes:
-      - connector_data:/data
-    restart: unless-stopped
 
   # Gmail runs as its own connector process (one source per process), writing to its own
   # collection. Start it with: docker compose --profile gmail up -d
   connector-gmail:
+    <<: *connector
     profiles: ["gmail"]
-    build: .
-    env_file: .env
     environment:
       SOURCE: gmail
       ARANGO_HOSTS: http://arangodb:8529
@@ -41,33 +48,22 @@ services:
       # Paths inside the container; put the files in ./secrets/gmail on the host.
       GMAIL_SERVICE_ACCOUNT_FILE: /secrets/gmail/service-account.json
       GMAIL_OAUTH_TOKEN_DIR: /secrets/gmail
-    depends_on:
-      arangodb:
-        condition: service_healthy
-    volumes:
+    volumes: # replaces the shared list, so it repeats /data
       - connector_data:/data
       - ./secrets/gmail:/secrets/gmail:ro
-    restart: unless-stopped
 
   # Jira runs as its own connector process, writing to its own collection. Retention is
   # off by default: it counts from created_at, and an old issue updated today would be
   # stored already expired. Start it with: docker compose --profile jira up -d
   connector-jira:
+    <<: *connector
     profiles: ["jira"]
-    build: .
-    env_file: .env
     environment:
       SOURCE: jira
       ARANGO_HOSTS: http://arangodb:8529
       ARANGO_COLLECTION: ${JIRA_ARANGO_COLLECTION:-jira}
       RETENTION_DAYS: ${JIRA_RETENTION_DAYS:-0}
       DEAD_LETTER_PATH: /data/jira_dead_letter.jsonl
-    depends_on:
-      arangodb:
-        condition: service_healthy
-    volumes:
-      - connector_data:/data
-    restart: unless-stopped
 
 volumes:
   arangodb_data:

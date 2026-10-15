@@ -51,11 +51,11 @@ Put the site URL, the account's email, the token and the project keys in `.env`.
 | `JIRA_POLL_INTERVAL_SECONDS` | `60` | number > 0 | Seconds between polls. A change in Jira is picked up by the next poll. |
 | `JIRA_INITIAL_SYNC` | `lookback` | `now` \| `lookback` \| `all` | First start for a project: `now` takes only later changes; `lookback` also takes issues updated in the last `JIRA_INITIAL_LOOKBACK`; `all` takes every issue in the project. |
 | `JIRA_INITIAL_LOOKBACK` | `30d` | duration | For `lookback`: e.g. `12h`, `30d`, `365d`. |
-| `JIRA_PAGE_SIZE` | `100` | integer ≥ 1 | Issues per search request, at most 100. |
+| `JIRA_PAGE_SIZE` | `100` | integer ≥ 1, ≤ 100 | Issues per search request. |
 <!-- END GENERATED: config:jira -->
 
 `JIRA_BASE_URL` must be https, `JIRA_EMAIL` an address and each `JIRA_PROJECTS` entry a
-valid project key; the connector refuses to start otherwise. A change reaches ArangoDB
+valid project key; the connector refuses to start otherwise. A change reaches Arango
 within about one poll interval, so keep `JIRA_POLL_INTERVAL_SECONDS` well under `300` to
 meet a five-minute freshness target.
 
@@ -68,7 +68,7 @@ Compose-only (the `connector-jira` service):
 
 ## Running
 
-**Locally**, against ArangoDB from `docker compose up -d arangodb`, or the disposable
+**Locally**, against Arango from `docker compose up -d arangodb`, or the disposable
 one from `make test-db-up` (<http://localhost:18529>, `root` / `test-password`):
 
 ```bash
@@ -129,7 +129,9 @@ docker compose --profile jira up -d --build
 - **What is not removed.** Deleted issues and comments stay stored (see
   [Not supported yet](#not-supported-yet)). An issue moved to an unwatched project
   stays as last seen; moved to a watched one, it keeps its key and its `scope` and
-  `issue_key` follow the move.
+  `issue_key` follow the move. Its comments are only rewritten when they change, so
+  join comments to issues by `payload.parent_id` (the stable issue id): a comment's
+  `scope` and `parent_key` are as of its last write.
 - **Rate limits and failures.** 429 and 5xx responses and connection errors are retried,
   with up to five attempts per request, waiting `Retry-After` when Jira sends it (capped
   at 60s) and an exponential backoff with jitter otherwise; each wait logs
@@ -231,7 +233,7 @@ A comment:
 
 Retention counts from `created_at`, which for Jira is when the issue (or comment) was
 created. With `RETENTION_DAYS=30`, an issue created two years ago and updated today
-would be written already expired and removed by ArangoDB's TTL sweep almost at once.
+would be written already expired and removed by Arango's TTL sweep almost at once.
 So the Compose service runs Jira with retention **off** (`JIRA_RETENTION_DAYS=0`), in
 its own collection. If you turn it on, expect only recently created issues and comments
 to be kept.
@@ -242,11 +244,11 @@ Issues and comments can hold customer data, credentials pasted by mistake, and
 discussion restricted to a role or group.
 
 - The connector stores whatever the account can see. Restricted comments keep their
-  restriction in `payload.visibility` (`{type: "role" | "group", value}`), but ArangoDB
+  restriction in `payload.visibility` (`{type: "role" | "group", value}`), but Arango
   does not enforce it: give readers of the `jira` collection the same clearance, or
   filter on `payload.visibility == null`.
 - Write Jira to its own collection (the Compose service uses `jira`), and give readers
-  a dedicated ArangoDB user with access to that collection only.
+  a dedicated Arango user with access to that collection only.
 - Use a dedicated account with read-only project roles, and an expiring token.
 - The token is held as a secret and never logged; error messages carry only Jira's own
   error text.

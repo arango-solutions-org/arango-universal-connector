@@ -25,7 +25,7 @@ class SampleSettings(ConnectorSettings):
         default_factory=lambda: ["x", "y"], description="Some ids."
     )
     sample_window: timedelta = Field(default=timedelta(hours=24), description="How long.")
-    sample_count: int = Field(default=3, ge=0, description="How many.")
+    sample_count: int = Field(default=3, ge=0, le=9, description="How many.")
     sample_flag: bool = Field(default=False, description="On or off.")
     sample_file: Path | None = Field(default=None, description="Optional file.")
 
@@ -38,7 +38,7 @@ def test_config_table_renders_every_setting() -> None:
     assert "`a` \\| `b`" in rows["SAMPLE_MODE"] and "Pick \\| one." in rows["SAMPLE_MODE"]
     assert "`x,y`" in rows["SAMPLE_IDS"] and "comma-separated" in rows["SAMPLE_IDS"]
     assert "`24h`" in rows["SAMPLE_WINDOW"] and "duration" in rows["SAMPLE_WINDOW"]
-    assert "integer ≥ 0" in rows["SAMPLE_COUNT"]
+    assert "integer ≥ 0, ≤ 9" in rows["SAMPLE_COUNT"]
     assert "`false`" in rows["SAMPLE_FLAG"]
     assert "| — | path |" in rows["SAMPLE_FILE"]
 

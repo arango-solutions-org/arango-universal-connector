@@ -31,7 +31,7 @@ def slack_adapter(monkeypatch: pytest.MonkeyPatch) -> SlackSocketModeAdapter:
             bot_user_id="U0SELFBOT",
         )
 
-    monkeypatch.setattr(adapter_module, "App", lambda token: App(authorize=authorize))
+    monkeypatch.setattr(adapter_module, "App", lambda token, **kw: App(authorize=authorize, **kw))
     adapter = SlackSocketModeAdapter("xoxb-fake", "xapp-fake", {WATCHED})
     monkeypatch.setattr(adapter.app.client, "users_info", FakeUsersInfo())
     return adapter

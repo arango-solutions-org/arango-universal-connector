@@ -13,13 +13,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from arango_connector.sources.gmail.config import AuthMode
+from arango_connector.sources.gmail.config import AuthMode, token_path
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
-
-
-def token_path(token_dir: Path, mailbox: str) -> Path:
-    return token_dir / f"{mailbox.lower()}.json"
 
 
 def build_credentials(

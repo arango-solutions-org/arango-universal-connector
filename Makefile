@@ -96,11 +96,11 @@ run: ## Run the connector locally (reads .env)
 build: _require-container ## Build the connector image
 	$(CONTAINER) build -t $(IMAGE) .
 
-up: _require-container ## Start ArangoDB and the connector with Compose
-	$(COMPOSE) up --build -d
+up: _require-container ## Start ArangoDB and the Slack connector with Compose
+	$(COMPOSE) --profile slack up --build -d
 
-down: _require-container ## Stop the Compose stack (keeps data volumes)
-	$(COMPOSE) down
+down: _require-container ## Stop the Compose stack, every source (keeps data volumes)
+	$(COMPOSE) --profile slack --profile gmail --profile jira down
 
 logs: _require-container ## Follow the connector's Compose logs
 	$(COMPOSE) logs -f connector

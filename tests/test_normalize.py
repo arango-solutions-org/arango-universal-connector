@@ -79,6 +79,17 @@ def test_thread_broadcast_is_ingested(load_event: LoadEvent) -> None:
     assert env.payload.parent_id == "1716500000.123456"
 
 
+def test_message_with_upload_keeps_its_text(load_event: LoadEvent) -> None:
+    event = load_event("user_message")
+    event["subtype"] = "file_share"
+    event["files"] = [{"id": "F0TESTFILE1", "name": "screenshot.png"}]
+    env = normalize(event, TEAM_ID)
+    assert env is not None
+    assert env.payload.text == "Hello from the test channel :wave:"
+    assert env.payload.author_type == "user"
+    assert env.raw["files"] == event["files"]
+
+
 def test_bot_message(load_event: LoadEvent) -> None:
     env = normalize(load_event("bot_message"), TEAM_ID)
     assert env is not None

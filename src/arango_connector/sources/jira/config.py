@@ -51,7 +51,7 @@ class JiraSettings(ConnectorSettings):
         default=100,
         ge=1,
         le=100,
-        description="Issues per search request, at most 100.",
+        description="Issues per search request.",
     )
 
     @field_validator("jira_base_url")

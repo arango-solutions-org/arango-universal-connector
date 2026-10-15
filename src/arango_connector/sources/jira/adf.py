@@ -7,6 +7,7 @@ plain text goes into the payload so it can be read and searched; the ADF itself 
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 # Nodes whose children each start on a new line.
@@ -70,7 +71,11 @@ def _inline(node: dict[str, Any]) -> str:
     if kind in ("inlineCard", "blockCard", "embedCard"):
         return str(attrs.get("url") or "")
     if kind == "date":
-        return str(attrs.get("timestamp") or "")
+        timestamp = str(attrs.get("timestamp") or "")
+        try:  # ADF dates are epoch milliseconds at midnight UTC
+            return datetime.fromtimestamp(int(timestamp) / 1000, UTC).date().isoformat()
+        except (ValueError, OverflowError, OSError):
+            return timestamp
     if kind == "status":
         return str(attrs.get("text") or "")
     return "".join(_inline(child) for child in _children(node))

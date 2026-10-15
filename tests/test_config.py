@@ -20,7 +20,7 @@ SLACK_VARS = ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_CHANNEL_IDS")
 class _FakeApp:
     """Stands in for slack_bolt.App so building the adapter makes no network calls."""
 
-    def __init__(self, token: str) -> None:
+    def __init__(self, token: str, **_: Any) -> None:
         self.token = token
 
     def event(self, _name: str) -> Callable[[Any], Any]:
@@ -38,6 +38,7 @@ def _isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         "RETENTION_DAYS",
         "RETENTION_MODE",
         "RETENTION_AGE_FIELD",
+        "LOG_LEVEL",
     ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("ARANGO_PASSWORD", "pw")
@@ -100,6 +101,23 @@ def test_retention_age_mode_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert load_settings(CoreSettings).retention_policy() == RetentionPolicy(
         7, "age", "ingested_at"
     )
+
+
+def test_retention_days_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RETENTION_DAYS", "36501")
+    with pytest.raises(ConfigError, match="RETENTION_DAYS"):
+        load_settings(CoreSettings)
+
+
+def test_log_level_is_case_insensitive(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOG_LEVEL", "debug")
+    assert load_settings(CoreSettings).log_level == "DEBUG"
+
+
+def test_unknown_log_level_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOG_LEVEL", "verbose")
+    with pytest.raises(ConfigError, match="LOG_LEVEL"):
+        load_settings(CoreSettings)
 
 
 def test_invalid_retention_mode_is_named(monkeypatch: pytest.MonkeyPatch) -> None:

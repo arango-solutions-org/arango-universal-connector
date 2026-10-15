@@ -12,8 +12,9 @@ SOURCE = "slack"
 
 # Subtypes that represent a genuinely new message. Everything else is skipped.
 # TODO(future): handle "message_deleted" (deletes); needs a delete op on Envelope/Sink.
-# TODO(future): handle "file_share" and reactions once files/reactions are in scope.
-INGESTED_SUBTYPES = frozenset({"bot_message", "thread_broadcast"})
+# "file_share" is a message posted with an upload: its text is kept, the file is not.
+# TODO(future): the files themselves and reactions, once they are in scope.
+INGESTED_SUBTYPES = frozenset({"bot_message", "thread_broadcast", "file_share"})
 
 EDIT_SUBTYPE = "message_changed"
 

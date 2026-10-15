@@ -55,6 +55,13 @@ def test_marks_are_dropped_and_inline_nodes_rendered() -> None:
     assert rendered == "Hi @Ada 🎉\nhttps://example.com/x BLOCKED"
 
 
+def test_date_renders_as_an_iso_date() -> None:
+    due = {"type": "date", "attrs": {"timestamp": "1716422400000"}}
+    assert adf_to_text(doc(para(text("Due "), due))) == "Due 2024-05-23"
+    odd = {"type": "date", "attrs": {"timestamp": "soon"}}
+    assert adf_to_text(doc(para(odd))) == "soon"
+
+
 def test_mention_without_text_falls_back_to_id() -> None:
     assert adf_to_text(doc(para({"type": "mention", "attrs": {"id": "5b10"}}))) == "@5b10"
 

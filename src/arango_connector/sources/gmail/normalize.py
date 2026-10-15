@@ -96,7 +96,7 @@ def _decode_data(part: dict[str, Any]) -> str | None:
     if not data:
         return None
     try:
-        raw = base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+        raw = decode_part_data(data)
     except (binascii.Error, ValueError):
         return None
     try:

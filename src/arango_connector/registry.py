@@ -37,11 +37,6 @@ class SourceInfo:
 SinkFactory = Callable[[CoreSettings], Sink]
 
 
-def _arango_hosts(settings: CoreSettings) -> str | list[str]:
-    hosts = settings.arango_hosts
-    return hosts[0] if len(hosts) == 1 else hosts
-
-
 def build_slack_adapter(settings: CoreSettings, state: StateStore) -> SourceAdapter:
     """Build the Slack Socket Mode adapter. Slack keeps no state; ``state`` is unused."""
     # Imported lazily so other sources don't pay for (or require) slack_bolt.
@@ -134,7 +129,7 @@ def build_arango_sink(settings: CoreSettings) -> Sink:
     from arango_connector.sinks.arango import ArangoSink
 
     return ArangoSink(
-        hosts=_arango_hosts(settings),
+        hosts=settings.arango_hosts,
         username=settings.arango_username,
         password=settings.arango_password.get_secret_value(),
         db_name=settings.arango_db,
@@ -148,7 +143,7 @@ def build_state_store(settings: CoreSettings) -> StateStore:
     from arango_connector.state.arango import ArangoStateStore
 
     return ArangoStateStore(
-        hosts=_arango_hosts(settings),
+        hosts=settings.arango_hosts,
         username=settings.arango_username,
         password=settings.arango_password.get_secret_value(),
         db_name=settings.arango_db,

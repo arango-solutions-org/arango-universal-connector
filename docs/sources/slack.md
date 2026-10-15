@@ -1,7 +1,7 @@
 # Slack source
 
 `SOURCE=slack`. Listens to an allowlist of Slack channels in real time over Socket Mode
-and writes every new message, thread reply and edit to ArangoDB within seconds.
+and writes every new message, thread reply and edit to Arango within seconds.
 
 | | |
 |---|---|
@@ -43,10 +43,10 @@ Messages go to `ARANGO_COLLECTION` (default `messages`).
 
 ```bash
 cp .env.example .env      # set SLACK_* and ARANGO_PASSWORD
-docker compose up --build
+docker compose --profile slack up --build
 ```
 
-Post a message in a watched channel. Within a few seconds it appears in the ArangoDB web
+Post a message in a watched channel. Within a few seconds it appears in the Arango web
 UI at <http://localhost:8529> (user `root`, your `ARANGO_PASSWORD`) under database
 `connector` → collection `messages`:
 
@@ -59,8 +59,9 @@ To run the connector outside Docker: `docker compose up -d arangodb`, then
 
 ## How sync works
 
-- **What is read:** new messages, thread replies, bot messages and thread broadcasts
-  in the watched channels. Other channels are ignored.
+- **What is read:** new messages, thread replies, bot messages, thread broadcasts and
+  messages with uploads (their text; the file itself is not stored) in the watched
+  channels. Other channels are ignored.
 - **Edits** overwrite the stored document. An edit is keyed on the original message's
   `ts`, so it lands on the existing document, and `updated_at` is set. Because the
   whole document is replaced, content the edit removed does not survive anywhere,
@@ -117,7 +118,7 @@ To run the connector outside Docker: `docker compose up -d arangodb`, then
 ## Privacy and security
 
 Messages are stored with full text and the original event in `raw`. Tokens are held as
-secrets and never logged. Use a dedicated ArangoDB user with access to the messages
+secrets and never logged. Use a dedicated Arango user with access to the messages
 collection only for anyone reading the data.
 
 ## Troubleshooting

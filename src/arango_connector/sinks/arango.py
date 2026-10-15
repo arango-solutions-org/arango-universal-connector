@@ -8,14 +8,8 @@ from typing import Any
 from arango import ArangoClient
 from arango.collection import StandardCollection
 from arango.database import StandardDatabase
-from arango.exceptions import ArangoServerError
 
-from arango_connector.arango_common import (
-    ArangoWriteError,
-    connect,
-    ensure_collection,
-    retrying,
-)
+from arango_connector.arango_common import connect, ensure_collection, retrying
 from arango_connector.envelope import Envelope
 from arango_connector.retention import RetentionPolicy
 from arango_connector.sinks.base import Sink
@@ -178,24 +172,12 @@ class ArangoSink(Sink):
     # -- writes ------------------------------------------------------------
 
     def write(self, envelopes: list[Envelope[Any]]) -> None:
-        """Upsert envelopes, retrying transient failures; re-raises on final failure."""
-        if not envelopes:
-            return
-        docs = [r.to_document() for r in envelopes]
-        retrying(self._retry_attempts, self._retry_wait_initial, self._retry_wait_max)(
-            self._write_once, docs
-        )
-
-    def _write_once(self, docs: list[dict[str, Any]]) -> None:
+        """Upsert envelopes one by one, retrying transient failures; re-raises on final
+        failure."""
         collection = self._require_collection()
-        if len(docs) == 1:
-            collection.insert(docs[0], overwrite_mode="replace", silent=True)
-            return
-        results = collection.insert_many(docs, overwrite_mode="replace")
-        if isinstance(results, list):
-            errors = [r for r in results if isinstance(r, ArangoServerError)]
-            if errors:
-                raise ArangoWriteError(errors)
+        retry = retrying(self._retry_attempts, self._retry_wait_initial, self._retry_wait_max)
+        for envelope in envelopes:
+            retry(collection.insert, envelope.to_document(), overwrite_mode="replace", silent=True)
 
     def _require_collection(self) -> StandardCollection:
         if self._collection is None:
