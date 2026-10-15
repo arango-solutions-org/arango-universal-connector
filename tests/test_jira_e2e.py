@@ -9,11 +9,11 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from arango import ArangoClient
 
-from arango_connector.pipeline import Pipeline
-from arango_connector.retention import RetentionPolicy
-from arango_connector.sinks.arango import ArangoSink
-from arango_connector.sources.jira.adapter import JiraPollingAdapter
-from arango_connector.state.arango import ArangoStateStore
+from arango_connector_standalone.pipeline import Pipeline
+from arango_connector_standalone.retention import RetentionPolicy
+from arango_connector_standalone.sinks.arango import ArangoSink
+from arango_connector_standalone.sources.jira.adapter import JiraPollingAdapter
+from arango_connector_standalone.state.arango import ArangoStateStore
 from jira_fakes import BASE_URL, SITE, FakeJiraClient, comment, issue
 
 if TYPE_CHECKING:

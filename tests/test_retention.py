@@ -8,7 +8,7 @@ import pytest
 
 from arango_connector.envelope import Envelope, Scope
 from arango_connector.payloads import MessagePayload
-from arango_connector.retention import RetentionPolicy
+from arango_connector_standalone.retention import RetentionPolicy
 
 POSTED = datetime(2024, 5, 1, tzinfo=UTC)
 INGESTED = datetime(2024, 5, 3, tzinfo=UTC)

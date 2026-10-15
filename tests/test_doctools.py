@@ -11,9 +11,10 @@ import pytest
 from pydantic import Field, SecretStr
 from pydantic_settings import NoDecode
 
-from arango_connector import doctools
+import doctools
+from arango_connector.catalog import SOURCE_INFO
 from arango_connector.config import ConnectorSettings
-from arango_connector.registry import SOURCE_INFO, SOURCES
+from arango_connector_standalone.registry import SOURCES
 
 REPO = doctools.REPO_ROOT
 

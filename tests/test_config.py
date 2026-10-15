@@ -8,11 +8,12 @@ from typing import Any
 
 import pytest
 
-from arango_connector.config import ConfigError, CoreSettings, load_settings
-from arango_connector.registry import build_source
-from arango_connector.retention import RetentionPolicy
-from arango_connector.sources.slack.adapter import SlackSocketModeAdapter
-from arango_connector.state import InMemoryStateStore
+from arango_connector.config import ConfigError, load_settings
+from arango_connector_standalone.config import CoreSettings
+from arango_connector_standalone.registry import build_source
+from arango_connector_standalone.retention import RetentionPolicy
+from arango_connector_standalone.sources.slack.adapter import SlackSocketModeAdapter
+from arango_connector_standalone.state import InMemoryStateStore
 
 SLACK_VARS = ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_CHANNEL_IDS")
 
@@ -76,7 +77,7 @@ def test_slack_source_builds_from_its_own_settings(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-fake")
     monkeypatch.setenv("SLACK_APP_TOKEN", "xapp-fake")
     monkeypatch.setenv("SLACK_CHANNEL_IDS", "C1, C2")
-    monkeypatch.setattr("arango_connector.sources.slack.adapter.App", _FakeApp)
+    monkeypatch.setattr("arango_connector_standalone.sources.slack.adapter.App", _FakeApp)
 
     source = build_source(load_settings(CoreSettings), InMemoryStateStore())
 

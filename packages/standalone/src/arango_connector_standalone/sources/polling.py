@@ -7,7 +7,7 @@ import threading
 import time
 from abc import abstractmethod
 
-from arango_connector.sources.base import EmitFn, SourceAdapter
+from arango_connector_standalone.sources.base import EmitFn, SourceAdapter
 
 logger = logging.getLogger(__name__)
 

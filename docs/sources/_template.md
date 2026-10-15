@@ -28,7 +28,7 @@ several, and say which to choose when.
 ## Configuration
 
 <!-- Generated: give every field of your settings class a description, add the source to
-SOURCE_INFO in registry.py, then put this region here and run `make docs-gen`:
+SOURCE_INFO in core's catalog.py, then put this region here and run `make docs-gen`:
 
 BEGIN GENERATED: config:<name>
 END GENERATED: config:<name>
@@ -39,7 +39,7 @@ Below the table, note any combinations that are validated at startup.
 
 ## Running
 
-Local (`uv run python -m arango_connector.main` with `SOURCE=<name>`) and Docker
+Local (`uv run python -m arango_connector_standalone.main` with `SOURCE=<name>`) and Docker
 (Compose service or profile, secrets mounts, file permissions for uid 10001).
 
 ## How sync works

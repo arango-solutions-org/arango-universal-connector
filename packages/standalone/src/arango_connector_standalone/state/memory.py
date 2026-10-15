@@ -6,7 +6,7 @@ import copy
 import threading
 from typing import Any
 
-from arango_connector.state.base import StateStore
+from arango_connector_standalone.state.base import StateStore
 
 
 class InMemoryStateStore(StateStore):

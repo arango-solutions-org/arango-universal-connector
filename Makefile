@@ -62,14 +62,14 @@ check: lint format-check typecheck docs-check test ## Everything CI should pass 
 # -- docs -----------------------------------------------------------------
 
 docs-gen: ## Regenerate config tables and the source catalogue in the docs from code
-	uv run python -m arango_connector.doctools gen
+	uv run python tools/doctools.py gen
 
 docs-check: ## Fail on stale generated docs, .env.example gaps or broken links
-	uv run python -m arango_connector.doctools check
+	uv run python tools/doctools.py check
 
 wiki-build: ## Render the docs as GitHub wiki pages into build/wiki (what CI publishes)
 	rm -rf build/wiki
-	uv run python -m arango_connector.doctools wiki build/wiki --sha "$$(git rev-parse HEAD)"
+	uv run python tools/doctools.py wiki build/wiki --sha "$$(git rev-parse HEAD)"
 
 # -- disposable test database ---------------------------------------------
 
@@ -111,10 +111,10 @@ platform-load: ## Load a local image into the platform cluster (IMAGE=name:tag)
 # -- running --------------------------------------------------------------
 
 run: ## Run the connector locally (reads .env)
-	uv run python -m arango_connector.main
+	uv run python -m arango_connector_standalone.main
 
 build: _require-container ## Build the connector image
-	$(CONTAINER) build -t $(IMAGE) .
+	$(CONTAINER) build -f packages/standalone/Dockerfile -t $(IMAGE) .
 
 up: _require-container ## Start ArangoDB and the Slack connector with Compose
 	$(COMPOSE) --profile slack up --build -d

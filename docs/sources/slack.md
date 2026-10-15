@@ -55,7 +55,7 @@ FOR m IN messages SORT m.created_at DESC LIMIT 10 RETURN m
 ```
 
 To run the connector outside Docker: `docker compose up -d arangodb`, then
-`uv run python -m arango_connector.main`. Press Ctrl+C to shut down cleanly.
+`uv run python -m arango_connector_standalone.main`. Press Ctrl+C to shut down cleanly.
 
 ## How sync works
 

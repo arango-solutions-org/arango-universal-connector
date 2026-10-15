@@ -8,9 +8,10 @@ import signal
 import sys
 from types import FrameType
 
-from arango_connector.config import ConfigError, CoreSettings, load_settings
-from arango_connector.pipeline import Pipeline
-from arango_connector.registry import build_sink, build_source, build_state_store
+from arango_connector.config import ConfigError, load_settings
+from arango_connector_standalone.config import CoreSettings
+from arango_connector_standalone.pipeline import Pipeline
+from arango_connector_standalone.registry import build_sink, build_source, build_state_store
 
 logger = logging.getLogger("arango_connector")
 

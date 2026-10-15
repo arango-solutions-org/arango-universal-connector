@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from arango_connector.sources.base import EmitFn
 from arango_connector.sources.jira.client import JiraClient, JiraInterrupted
 from arango_connector.sources.jira.config import InitialSync
 from arango_connector.sources.jira.normalize import (
@@ -17,8 +16,9 @@ from arango_connector.sources.jira.normalize import (
     normalize_issue,
     parse_jira_datetime,
 )
-from arango_connector.sources.polling import PollingSourceAdapter
-from arango_connector.state.base import StateStore
+from arango_connector_standalone.sources.base import EmitFn
+from arango_connector_standalone.sources.polling import PollingSourceAdapter
+from arango_connector_standalone.state.base import StateStore
 
 logger = logging.getLogger(__name__)
 

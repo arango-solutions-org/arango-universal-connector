@@ -9,7 +9,7 @@
 * ``wiki <out_dir>``: renders the docs as GitHub wiki pages (links rewritten, sidebar,
   "generated" banner). CI pushes the result to the wiki on every merge to ``main``.
 
-Usage: ``python -m arango_connector.doctools {gen,check,wiki} [...]``
+Usage: ``python tools/doctools.py {gen,check,wiki} [...]``
 """
 
 from __future__ import annotations
@@ -31,10 +31,12 @@ from pydantic import SecretStr
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
-from arango_connector.config import ConnectorSettings, CoreSettings
-from arango_connector.registry import SOURCE_INFO, SOURCES
+from arango_connector.catalog import SOURCE_INFO
+from arango_connector.config import ConnectorSettings
+from arango_connector_standalone.config import CoreSettings
+from arango_connector_standalone.registry import SOURCES
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCES_DIR = Path("docs/sources")
 
 # Files whose generated regions are maintained, relative to the repo root.
@@ -401,7 +403,7 @@ def build_wiki(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m arango_connector.doctools")
+    parser = argparse.ArgumentParser(prog="python tools/doctools.py")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("gen", help="rewrite generated regions in the docs")
     sub.add_parser("check", help="fail on stale regions, .env.example gaps or broken links")

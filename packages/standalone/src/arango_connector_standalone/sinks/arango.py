@@ -9,10 +9,10 @@ from arango import ArangoClient
 from arango.collection import StandardCollection
 from arango.database import StandardDatabase
 
-from arango_connector.arango_common import connect, ensure_collection, retrying
 from arango_connector.envelope import Envelope
-from arango_connector.retention import RetentionPolicy
-from arango_connector.sinks.base import Sink
+from arango_connector_standalone.arango_common import connect, ensure_collection, retrying
+from arango_connector_standalone.retention import RetentionPolicy
+from arango_connector_standalone.sinks.base import Sink
 
 logger = logging.getLogger(__name__)
 

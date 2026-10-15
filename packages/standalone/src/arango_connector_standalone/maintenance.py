@@ -17,12 +17,13 @@ from typing import Any
 
 from arango.database import StandardDatabase
 
-from arango_connector.arango_common import connect
-from arango_connector.config import ConfigError, CoreSettings, load_settings
-from arango_connector.main import configure_logging
-from arango_connector.retention import RetentionPolicy
+from arango_connector.config import ConfigError, load_settings
+from arango_connector_standalone.arango_common import connect
+from arango_connector_standalone.config import CoreSettings
+from arango_connector_standalone.main import configure_logging
+from arango_connector_standalone.retention import RetentionPolicy
 
-logger = logging.getLogger("arango_connector.maintenance")
+logger = logging.getLogger("arango_connector_standalone.maintenance")
 
 DEFAULT_BATCH_SIZE = 5000
 

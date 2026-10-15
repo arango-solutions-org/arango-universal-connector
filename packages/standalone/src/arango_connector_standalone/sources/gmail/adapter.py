@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from arango_connector.sources.base import EmitFn
 from arango_connector.sources.gmail.client import GmailClient, HistoryExpiredError
 from arango_connector.sources.gmail.config import InitialSync, LabelMatch
 from arango_connector.sources.gmail.normalize import (
@@ -21,8 +20,9 @@ from arango_connector.sources.gmail.normalize import (
     normalize,
     normalize_attachment,
 )
-from arango_connector.sources.polling import PollingSourceAdapter
-from arango_connector.state.base import StateStore
+from arango_connector_standalone.sources.base import EmitFn
+from arango_connector_standalone.sources.polling import PollingSourceAdapter
+from arango_connector_standalone.state.base import StateStore
 
 logger = logging.getLogger(__name__)
 

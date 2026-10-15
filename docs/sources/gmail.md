@@ -176,7 +176,7 @@ otherwise.
 one from `make test-db-up` (<http://localhost:18529>, `root` / `test-password`):
 
 ```bash
-SOURCE=gmail make run      # or: SOURCE=gmail uv run python -m arango_connector.main
+SOURCE=gmail make run      # or: SOURCE=gmail uv run python -m arango_connector_standalone.main
 ```
 
 The `connector` database and its collections are created on the first start, so they
@@ -335,7 +335,7 @@ becomes its own `kind: "attachment"` document in the same collection as the emai
   `.doc`, which needs an external converter) are stored without text and with
   `skipped_reason: "unsupported_type"`. Scanned PDFs without a text layer give
   `no_text`, and password-protected ones give `encrypted`. The extractors live in
-  `arango_connector/extract.py`, shared by all sources.
+  `packages/core/src/arango_connector/extract.py`, shared by all sources.
 - **When files are downloaded.** Only when the email is ingested for the first time:
   new mail, mail that just gained a watched label, or thread replies pulled in with it.
   Read/unread and other label changes rewrite the email but don't re-download its

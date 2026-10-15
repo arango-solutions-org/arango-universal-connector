@@ -7,11 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from arango_connector.config import ConfigError, CoreSettings, load_settings
-from arango_connector.registry import build_source
-from arango_connector.sources.jira.adapter import JiraPollingAdapter
+from arango_connector.config import ConfigError, load_settings
 from arango_connector.sources.jira.config import JiraSettings
-from arango_connector.state import InMemoryStateStore
+from arango_connector_standalone.config import CoreSettings
+from arango_connector_standalone.registry import build_source
+from arango_connector_standalone.sources.jira.adapter import JiraPollingAdapter
+from arango_connector_standalone.state import InMemoryStateStore
 
 JIRA_VARS = (
     "JIRA_BASE_URL",

@@ -9,16 +9,16 @@ from typing import Any
 import pytest
 
 from arango_connector.envelope import Envelope
-from arango_connector.sources.gmail.adapter import (
+from arango_connector.sources.gmail.client import GmailClient
+from arango_connector.sources.gmail.normalize import NormalizeOptions, mailbox_key
+from arango_connector_standalone.sources.gmail.adapter import (
     GAP_OVERLAP,
     STATE_NAMESPACE,
     GmailPollingAdapter,
     LabelFilter,
     resolve_labels,
 )
-from arango_connector.sources.gmail.client import GmailClient
-from arango_connector.sources.gmail.normalize import NormalizeOptions, mailbox_key
-from arango_connector.state import InMemoryStateStore
+from arango_connector_standalone.state import InMemoryStateStore
 from gmail_fakes import FakeGmailClient, message
 
 ADA = "ada@example.com"

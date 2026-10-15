@@ -10,8 +10,8 @@ from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from slack_sdk.errors import SlackApiError
 
-from arango_connector.sources.base import EmitFn, SourceAdapter
 from arango_connector.sources.slack.normalize import normalize
+from arango_connector_standalone.sources.base import EmitFn, SourceAdapter
 
 logger = logging.getLogger(__name__)
 

@@ -32,7 +32,7 @@ Some parts are generated from the code so they can't drift:
 | Generated content | From |
 |---|---|
 | Configuration tables (core and per source) | the settings classes: field names, defaults, allowed values and `description`s |
-| The source catalogue (the table above, and in the main README) | `SOURCE_INFO` in `registry.py` |
+| The source catalogue (the table above, and in the main README) | `SOURCE_INFO` in core's `catalog.py` |
 
 They sit between `<!-- BEGIN GENERATED: … -->` and `<!-- END GENERATED: … -->` markers.
 Don't edit inside them; change the code and run:
