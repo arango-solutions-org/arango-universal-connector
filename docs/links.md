@@ -180,5 +180,6 @@ published Links docs:
 | `404 unknown path '/link/…'` | The route hasn't reached the gateway yet | Wait a minute; `GatewayConfig` on the `ArangoDeployment` turns `True` |
 | Job `FAILED`: `invalid input: …` | The input doesn't match the operation's schema | Check the operation's fields below each source's reference |
 | Job `FAILED`: `… is not one of this link's …` | The job asked for a mailbox, channel or project outside the link's scope | Add it to the link's settings, or ask within scope |
+| Job `FAILED`: `link restarting; resubmit the job …` | The link was stopped mid-job (an upgrade or a pod restart); jobs can't be requeued | Submit it again |
 | Job `FAILED`: `internal error (…)` | An unexpected error | The link's logs (`-c connector`) have the details |
 | Sidecar logs `link.v1=unhealthy` | The link hasn't registered | Check the connector container's logs |
