@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from arango_connector.state import InMemoryStateStore
-from arango_connector.state.arango import ArangoStateStore
+from arango_connector_standalone.state import InMemoryStateStore
+from arango_connector_standalone.state.arango import ArangoStateStore
 
 if TYPE_CHECKING:
     from conftest import ArangoConn

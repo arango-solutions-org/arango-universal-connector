@@ -1,0 +1,21 @@
+{{- $info := include "link.schema" . | fromJson }}
+apiVersion: platform.arangodb.com/v1beta1
+kind: ArangoPlatformLink
+metadata:
+  name: {{ include "link.name" . }}
+spec:
+  type: Active
+  deployment:
+    name: {{ required "arangodb_platform.deployment.name is required" .Values.arangodb_platform.deployment.name }}
+  route:
+    name: {{ include "link.name" . }}-route
+  description: {{ $info.description | quote }}
+  {{- if .Values.linkSpec.extended }}
+  # Newer operators also accept these. Either way, the link registers its tags and
+  # input/output schemas with the platform at startup (UpdateInfo).
+  tags:
+{{ toYaml $info.tags | indent 4 }}
+  schema:
+{{ toYaml $info.input_schema | indent 4 }}
+  version: {{ .Chart.AppVersion | quote }}
+  {{- end }}

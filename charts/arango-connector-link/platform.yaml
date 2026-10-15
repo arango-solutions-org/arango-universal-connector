@@ -1,0 +1,7 @@
+# Connector metadata for the ArangoDB Platform (ArangoPlatformChart).
+name: arango-connector-link
+description: Arango Universal Connector sources (Gmail, ...) as ArangoDB Platform Links.
+tags:
+  - connector
+  - email
+  - gmail

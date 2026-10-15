@@ -1,0 +1,210 @@
+{
+  "description": "Read email from Gmail: search with Gmail query syntax, fetch a whole thread, or export a date range. Returns one document per email, plus one per attachment when requested, as JSONL.",
+  "input_schema": {
+    "$defs": {
+      "Export": {
+        "additionalProperties": false,
+        "description": "Messages received in a date range, optionally narrowed to some labels.",
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Received on or after this date.",
+            "title": "After"
+          },
+          "attachments": {
+            "default": "off",
+            "description": "Attachment documents to include: off, metadata, content (file as base64), text (extracted text) or all. Limited by the link's configuration.",
+            "enum": [
+              "off",
+              "metadata",
+              "content",
+              "text",
+              "all"
+            ],
+            "title": "Attachments",
+            "type": "string"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Received before this date.",
+            "title": "Before"
+          },
+          "labels": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Only these labels (IDs or names); must be within the link's labels.",
+            "title": "Labels"
+          },
+          "mailbox": {
+            "description": "Mailbox to read. Must be one of the link's mailboxes.",
+            "title": "Mailbox",
+            "type": "string"
+          },
+          "max_results": {
+            "default": 1000,
+            "description": "Emails to return.",
+            "maximum": 10000,
+            "minimum": 1,
+            "title": "Max Results",
+            "type": "integer"
+          },
+          "operation": {
+            "const": "export",
+            "title": "Operation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mailbox",
+          "operation"
+        ],
+        "title": "Export",
+        "type": "object"
+      },
+      "GetThread": {
+        "additionalProperties": false,
+        "description": "Every message in one thread.",
+        "properties": {
+          "attachments": {
+            "default": "off",
+            "description": "Attachment documents to include: off, metadata, content (file as base64), text (extracted text) or all. Limited by the link's configuration.",
+            "enum": [
+              "off",
+              "metadata",
+              "content",
+              "text",
+              "all"
+            ],
+            "title": "Attachments",
+            "type": "string"
+          },
+          "mailbox": {
+            "description": "Mailbox to read. Must be one of the link's mailboxes.",
+            "title": "Mailbox",
+            "type": "string"
+          },
+          "operation": {
+            "const": "get_thread",
+            "title": "Operation",
+            "type": "string"
+          },
+          "thread_id": {
+            "description": "Gmail thread ID.",
+            "minLength": 1,
+            "title": "Thread Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mailbox",
+          "operation",
+          "thread_id"
+        ],
+        "title": "GetThread",
+        "type": "object"
+      },
+      "Search": {
+        "additionalProperties": false,
+        "description": "Messages matching a Gmail search query.",
+        "properties": {
+          "attachments": {
+            "default": "off",
+            "description": "Attachment documents to include: off, metadata, content (file as base64), text (extracted text) or all. Limited by the link's configuration.",
+            "enum": [
+              "off",
+              "metadata",
+              "content",
+              "text",
+              "all"
+            ],
+            "title": "Attachments",
+            "type": "string"
+          },
+          "mailbox": {
+            "description": "Mailbox to read. Must be one of the link's mailboxes.",
+            "title": "Mailbox",
+            "type": "string"
+          },
+          "max_results": {
+            "default": 100,
+            "description": "Emails to return.",
+            "maximum": 1000,
+            "minimum": 1,
+            "title": "Max Results",
+            "type": "integer"
+          },
+          "operation": {
+            "const": "search",
+            "title": "Operation",
+            "type": "string"
+          },
+          "query": {
+            "description": "Gmail search syntax, e.g. \"from:ada subject:invoice\".",
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mailbox",
+          "operation",
+          "query"
+        ],
+        "title": "Search",
+        "type": "object"
+      }
+    },
+    "discriminator": {
+      "mapping": {
+        "export": "#/$defs/Export",
+        "get_thread": "#/$defs/GetThread",
+        "search": "#/$defs/Search"
+      },
+      "propertyName": "operation"
+    },
+    "oneOf": [
+      {
+        "$ref": "#/$defs/Search"
+      },
+      {
+        "$ref": "#/$defs/GetThread"
+      },
+      {
+        "$ref": "#/$defs/Export"
+      }
+    ]
+  },
+  "tags": [
+    "email",
+    "gmail",
+    "google-workspace"
+  ]
+}

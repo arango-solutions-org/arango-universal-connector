@@ -11,8 +11,8 @@ import pytest
 from arango import ArangoClient
 from arango.database import StandardDatabase
 
-from arango_connector.maintenance import main, reconcile_expiry
-from arango_connector.retention import RetentionPolicy
+from arango_connector_standalone.maintenance import main, reconcile_expiry
+from arango_connector_standalone.retention import RetentionPolicy
 
 if TYPE_CHECKING:
     from conftest import ArangoConn

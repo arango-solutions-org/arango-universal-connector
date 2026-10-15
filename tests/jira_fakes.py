@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
@@ -137,6 +138,8 @@ class FakeJiraClient:
         self.failing_projects: set[str] = set()
         self.searches: list[tuple[str, datetime | None]] = []
         self.comment_fetches: list[str] = []
+        self.jqls: list[str] = []
+        self.ignore_scope = False
 
     # -- test setup ------------------------------------------------------------------
 
@@ -178,6 +181,30 @@ class FakeJiraClient:
         matches.sort(key=lambda i: (datetime.fromisoformat(i["fields"]["updated"]), i["key"]))
         for start in range(0, len(matches), self.page_size):
             yield [self._with_comments(i) for i in matches[start : start + self.page_size]]
+
+    def search_jql(self, jql: str) -> Iterator[list[dict[str, Any]]]:
+        """Honours only the ``project in (...)`` clause the link adds (unless
+        ``ignore_scope`` simulates a Jira that returns more than asked). Records the JQL."""
+        self.jqls.append(jql)
+        match = re.match(r"project in \(([^)]*)\)", jql)
+        projects = set(re.findall(r'"((?:[^"\\]|\\.)*)"', match.group(1))) if match else set()
+        matches = [
+            i
+            for i in self.issues.values()
+            if self.ignore_scope or i["fields"]["project"]["key"] in projects
+        ]
+        matches.sort(key=lambda i: (datetime.fromisoformat(i["fields"]["updated"]), i["key"]))
+        for start in range(0, len(matches), self.page_size):
+            yield [self._with_comments(i) for i in matches[start : start + self.page_size]]
+
+    def get_issue(self, key: str) -> dict[str, Any] | None:
+        for stored in self.issues.values():
+            if stored["key"] == key:
+                return self._with_comments(stored)
+        return None
+
+    def time_zone(self) -> Any:
+        return UTC
 
     def list_comments(self, issue_id: str) -> Iterator[dict[str, Any]]:
         self.comment_fetches.append(issue_id)

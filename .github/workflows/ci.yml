@@ -25,6 +25,30 @@ jobs:
       # ruff, ruff format, mypy, docs-check (generated docs, .env.example, links), pytest
       - run: make check
 
+  links:
+    name: Links (protos, chart, scripts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: make protos-check
+      - uses: azure/setup-helm@v4
+      - run: make helm-lint
+      - run: make shellcheck # shellcheck is preinstalled on ubuntu-latest
+
+  images:
+    name: Build images
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package: [standalone, links]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f packages/${{ matrix.package }}/Dockerfile -t ci-${{ matrix.package }} .
+
   integration:
     name: Integration tests (ArangoDB)
     runs-on: ubuntu-latest

@@ -12,8 +12,8 @@ from slack_bolt.authorization import AuthorizeResult
 from slack_sdk.errors import SlackApiError
 
 from arango_connector.envelope import Envelope
-from arango_connector.sources.slack import adapter as adapter_module
-from arango_connector.sources.slack.adapter import SlackSocketModeAdapter
+from arango_connector_standalone.sources.slack import adapter as adapter_module
+from arango_connector_standalone.sources.slack.adapter import SlackSocketModeAdapter
 
 LoadEvent = Callable[[str], dict[str, Any]]
 WATCHED = "C0TESTCHAN1"

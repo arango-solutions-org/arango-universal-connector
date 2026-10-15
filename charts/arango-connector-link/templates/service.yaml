@@ -1,0 +1,12 @@
+# The route's destination: the injected integration sidecar's job API on the link pods.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "link.name" . }}
+spec:
+  selector:
+    app: {{ include "link.name" . }}
+  ports:
+    - name: integration
+      port: 9193
+      targetPort: 9193

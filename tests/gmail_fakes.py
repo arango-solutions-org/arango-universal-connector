@@ -194,12 +194,14 @@ class FakeGmailClient:
             yield page
 
     def list_message_ids(self, query: str) -> Iterator[str]:
+        """``after:<epoch seconds>`` filters by received time (what standalone sends);
+        any other query (search terms, date ranges, ``in:anywhere``) matches every message.
+        Queries are recorded so tests can assert on them."""
         self.queries.append(query)
         match = re.fullmatch(r"after:(\d+)", query)
-        assert match, f"unexpected query {query!r}"
-        after_ms = int(match.group(1)) * 1000
-        for message_id, msg in self.messages.items():
-            if int(msg["internalDate"]) > after_ms:
+        after_ms = int(match.group(1)) * 1000 if match else None
+        for message_id, msg in list(self.messages.items()):
+            if after_ms is None or int(msg["internalDate"]) > after_ms:
                 yield message_id
 
     def get_attachment(self, message_id: str, attachment_id: str) -> bytes | None:

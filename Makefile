@@ -21,7 +21,8 @@ TEST_DB_ENV := ARANGO_HOSTS=$(TEST_DB_URL) ARANGO_PASSWORD=$(TEST_DB_PASSWORD) A
 
 .PHONY: help install lint format format-check typecheck test test-integration test-all check \
 	test-db-up test-db-down run build up down logs reconcile-expiry gmail-auth clean \
-	docs-gen docs-check wiki-build
+	docs-gen docs-check wiki-build protos link-image link-e2e platform-up platform-down platform-status platform-forward \
+	platform-load protos-check helm-lint shellcheck
 
 help: ## Show this help
 	@echo "Usage: make <target> [VAR=value]"
@@ -58,17 +59,40 @@ test-all: test test-integration ## Run unit and integration tests
 
 check: lint format-check typecheck docs-check test ## Everything CI should pass (no database needed)
 
+# -- links ----------------------------------------------------------------
+
+protos: ## Regenerate the Links gRPC stubs from packages/links/proto
+	uv run python tools/gen_protos.py
+
+protos-check: protos ## Fail if the committed gRPC stubs differ from the protos
+	git diff --exit-code -- packages/links/src/arango_connector_links/_pb
+
+helm-lint: ## Lint the link chart for every link
+	for link in gmail slack jira selftest; do \
+		helm lint charts/arango-connector-link --strict --set link=$$link \
+			--set arangodb_platform.deployment.name=deployment || exit 1; \
+	done
+
+shellcheck: ## Lint the dev scripts
+	shellcheck dev/*.sh
+
+link-image: _require-container ## Build the Links image (arango-connector-link:dev)
+	$(CONTAINER) build -f packages/links/Dockerfile -t arango-connector-link:dev .
+
+link-e2e: ## End-to-end: run a job on the local platform through the selftest link
+	dev/link-e2e.sh
+
 # -- docs -----------------------------------------------------------------
 
 docs-gen: ## Regenerate config tables and the source catalogue in the docs from code
-	uv run python -m arango_connector.doctools gen
+	uv run python tools/doctools.py gen
 
 docs-check: ## Fail on stale generated docs, .env.example gaps or broken links
-	uv run python -m arango_connector.doctools check
+	uv run python tools/doctools.py check
 
 wiki-build: ## Render the docs as GitHub wiki pages into build/wiki (what CI publishes)
 	rm -rf build/wiki
-	uv run python -m arango_connector.doctools wiki build/wiki --sha "$$(git rev-parse HEAD)"
+	uv run python tools/doctools.py wiki build/wiki --sha "$$(git rev-parse HEAD)"
 
 # -- disposable test database ---------------------------------------------
 
@@ -88,13 +112,32 @@ test-db-up: _require-container ## Start the disposable test ArangoDB and wait un
 test-db-down: _require-container ## Stop and remove the disposable test ArangoDB
 	-$(CONTAINER) rm -f $(TEST_DB_NAME)
 
+# -- local ArangoDB Platform (for Links) -----------------------------------
+# kind + Podman cluster with the Enterprise operator, ArangoDB and platform storage.
+# Needs ARANGO_LICENSE_KEY; see dev/platform.sh.
+
+platform-up: ## Create the local Links test platform (kind + Podman; needs ARANGO_LICENSE_KEY)
+	dev/platform.sh up
+
+platform-down: ## Delete the local platform cluster
+	dev/platform.sh down
+
+platform-status: ## Show the local platform's resources
+	dev/platform.sh status
+
+platform-forward: ## Port-forward the platform's ArangoDB to https://localhost:8529
+	dev/platform.sh forward
+
+platform-load: ## Load a local image into the platform cluster (IMAGE=name:tag)
+	dev/platform.sh load $(IMAGE)
+
 # -- running --------------------------------------------------------------
 
 run: ## Run the connector locally (reads .env)
-	uv run python -m arango_connector.main
+	uv run python -m arango_connector_standalone.main
 
 build: _require-container ## Build the connector image
-	$(CONTAINER) build -t $(IMAGE) .
+	$(CONTAINER) build -f packages/standalone/Dockerfile -t $(IMAGE) .
 
 up: _require-container ## Start ArangoDB and the Slack connector with Compose
 	$(COMPOSE) --profile slack up --build -d

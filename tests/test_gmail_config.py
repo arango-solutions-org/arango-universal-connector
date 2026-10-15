@@ -10,12 +10,13 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from arango_connector.config import ConfigError, CoreSettings, load_settings
-from arango_connector.registry import build_source
-from arango_connector.sources.gmail.adapter import GmailPollingAdapter
+from arango_connector.config import ConfigError, load_settings
 from arango_connector.sources.gmail.auth import SCOPES, auth_main, build_credentials, client_type
 from arango_connector.sources.gmail.config import GmailSettings, parse_duration
-from arango_connector.state import InMemoryStateStore
+from arango_connector_standalone.config import CoreSettings
+from arango_connector_standalone.registry import build_source
+from arango_connector_standalone.sources.gmail.adapter import GmailPollingAdapter
+from arango_connector_standalone.state import InMemoryStateStore
 
 GMAIL_VARS = (
     "GMAIL_AUTH_MODE",

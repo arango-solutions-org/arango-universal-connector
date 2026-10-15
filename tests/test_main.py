@@ -10,12 +10,12 @@ from typing import Any
 
 import pytest
 
-from arango_connector import main as main_module
 from arango_connector.envelope import Envelope
-from arango_connector.sinks.base import Sink
-from arango_connector.sources.base import EmitFn, SourceAdapter
 from arango_connector.sources.slack.normalize import normalize
-from arango_connector.state import InMemoryStateStore
+from arango_connector_standalone import main as main_module
+from arango_connector_standalone.sinks.base import Sink
+from arango_connector_standalone.sources.base import EmitFn, SourceAdapter
+from arango_connector_standalone.state import InMemoryStateStore
 
 
 class ClosableSink(Sink):

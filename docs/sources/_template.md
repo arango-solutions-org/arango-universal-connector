@@ -28,7 +28,7 @@ several, and say which to choose when.
 ## Configuration
 
 <!-- Generated: give every field of your settings class a description, add the source to
-SOURCE_INFO in registry.py, then put this region here and run `make docs-gen`:
+SOURCE_INFO in core's catalog.py, then put this region here and run `make docs-gen`:
 
 BEGIN GENERATED: config:<name>
 END GENERATED: config:<name>
@@ -39,7 +39,7 @@ Below the table, note any combinations that are validated at startup.
 
 ## Running
 
-Local (`uv run python -m arango_connector.main` with `SOURCE=<name>`) and Docker
+Local (`uv run python -m arango_connector_standalone.main` with `SOURCE=<name>`) and Docker
 (Compose service or profile, secrets mounts, file permissions for uid 10001).
 
 ## How sync works
@@ -56,6 +56,14 @@ Local (`uv run python -m arango_connector.main` with `SOURCE=<name>`) and Docker
 The `scope` mapping (`tenant_id`, `container_id`, `path`), a full example document, and
 notes on any field whose meaning is not obvious. The shared top-level fields are
 described in the main README's "Document shape".
+
+## As an ArangoDB Platform Link
+
+If the source has a link: what jobs can do, which settings scope them (and which are
+ignored), and how credentials are passed (`envSecret` or `credentialsSecret`). Link to
+[Links](../links.md) for deployment. Then add the generated reference:
+`<!-- BEGIN GENERATED: link:<name> -->` and `<!-- END GENERATED: link:<name> -->` markers,
+filled in by `make docs-gen`.
 
 ## Privacy and security
 

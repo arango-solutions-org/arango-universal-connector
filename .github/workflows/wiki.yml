@@ -7,7 +7,9 @@ on:
     paths:
       - "README.md"
       - "docs/**"
-      - "src/arango_connector/**"
+      - "packages/*/src/**"
+      - "charts/**"
+      - "tools/**"
       - ".github/workflows/wiki.yml"
   workflow_dispatch:
 
@@ -29,11 +31,11 @@ jobs:
       - run: uv sync --frozen
 
       - name: Check docs are current
-        run: uv run python -m arango_connector.doctools check
+        run: uv run python tools/doctools.py check
 
       - name: Render wiki pages
         run: >-
-          uv run python -m arango_connector.doctools wiki build/wiki
+          uv run python tools/doctools.py wiki build/wiki
           --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" --sha "$GITHUB_SHA"
 
       - name: Push to the wiki

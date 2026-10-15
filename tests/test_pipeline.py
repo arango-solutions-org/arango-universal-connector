@@ -9,12 +9,12 @@ from pathlib import Path
 from typing import Any
 
 from arango_connector.envelope import Envelope
-from arango_connector.pipeline import Pipeline
-from arango_connector.retention import RetentionPolicy
-from arango_connector.sinks.base import Sink
-from arango_connector.sources.base import EmitFn, SourceAdapter
 from arango_connector.sources.slack.normalize import normalize
-from arango_connector.state import InMemoryStateStore
+from arango_connector_standalone.pipeline import Pipeline
+from arango_connector_standalone.retention import RetentionPolicy
+from arango_connector_standalone.sinks.base import Sink
+from arango_connector_standalone.sources.base import EmitFn, SourceAdapter
+from arango_connector_standalone.state import InMemoryStateStore
 
 LoadEvent = Callable[[str], dict[str, Any]]
 

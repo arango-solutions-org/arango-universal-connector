@@ -13,9 +13,9 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from arango_connector.retention import RetentionPolicy
-from arango_connector.sinks.arango import INDEXES, ArangoSink, ttl_expiry_seconds
 from arango_connector.sources.slack.normalize import normalize
+from arango_connector_standalone.retention import RetentionPolicy
+from arango_connector_standalone.sinks.arango import INDEXES, ArangoSink, ttl_expiry_seconds
 
 if TYPE_CHECKING:
     from conftest import ArangoConn
