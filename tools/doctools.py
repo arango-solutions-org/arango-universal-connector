@@ -45,6 +45,7 @@ SOURCES_DIR = Path("docs/sources")
 GENERATED_FILES = (
     Path("README.md"),
     Path("docs/README.md"),
+    Path("docs/links.md"),
     *(SOURCES_DIR / info.doc for info in SOURCE_INFO.values()),
 )
 
@@ -164,13 +165,14 @@ def env_vars(cls: type[ConnectorSettings]) -> list[str]:
 def catalogue_table(doc_link: Callable[[str], str]) -> str:
     """The table of sources. ``doc_link`` maps a source's page name to a link target."""
     rows = [
-        "| Source | `SOURCE=` | Kinds | Delivery | What it ingests | Docs |",
-        "|---|---|---|---|---|---|",
+        "| Source | `SOURCE=` | Kinds | Standalone delivery | As a Link | What it ingests | Docs |",
+        "|---|---|---|---|---|---|---|",
     ]
     for name, info in SOURCE_INFO.items():
         kinds = ", ".join(f"`{k}`" for k in info.kinds)
         rows.append(
-            f"| {info.title} | `{name}` | {kinds} | {info.delivery} | {_cell(info.summary)} "
+            f"| {info.title} | `{name}` | {kinds} | {info.delivery} | {link_operations(name)} "
+            f"| {_cell(info.summary)} "
             f"| [{info.title} docs]({doc_link(info.doc)}) |"
         )
     return "\n".join(rows) + "\n"
@@ -185,6 +187,93 @@ def per_source_settings(doc_link: Callable[[str], str]) -> str:
             f"[{info.title} configuration]({doc_link(info.doc)}#configuration)."
         )
     return "\n".join(rows) + "\n"
+
+
+# -- links ---------------------------------------------------------------------------
+
+
+def _schema_type(prop: dict[str, Any]) -> tuple[str, bool]:
+    """A readable type for one JSON Schema property, and whether it accepts null."""
+    options = prop.get("anyOf") or [prop]
+    nullable = any(o.get("type") == "null" for o in options)
+    parts = []
+    for option in options:
+        if option.get("type") == "null":
+            continue
+        if "const" in option:
+            parts.append(f"`{option['const']}`")
+        elif "enum" in option:
+            parts.append(" \\| ".join(f"`{v}`" for v in option["enum"]))
+        elif option.get("type") == "array":
+            item = option.get("items", {})
+            parts.append(f"list of {item.get('type', 'values')}")
+        elif option.get("format") in ("date", "date-time"):
+            parts.append(option["format"])
+        else:
+            kind = option.get("type", "value")
+            bounds = [
+                f"{symbol} {option[key]}"
+                for key, symbol in (("minimum", "≥"), ("maximum", "≤"), ("minLength", "length ≥"))
+                if key in option
+            ]
+            parts.append(" ".join([kind, ", ".join(bounds)]).strip())
+    return " or ".join(parts) or "value", nullable
+
+
+def _operations(schema: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """``(operation name, model schema)`` pairs, for one model or a discriminated union."""
+    defs = schema.get("$defs", {})
+    mapping = (schema.get("discriminator") or {}).get("mapping")
+    if mapping:
+        return [(name, defs[ref.rsplit("/", 1)[-1]]) for name, ref in mapping.items()]
+    operation = schema.get("properties", {}).get("operation", {})
+    return [(str(operation.get("const") or operation.get("default") or "run"), schema)]
+
+
+def link_reference(name: str) -> str:
+    """Markdown for one link: its operations, their inputs, and example jobs."""
+    from arango_connector_links.main import link_types
+
+    cls = link_types()[name]
+    lines = [f"{cls.description}", "", f"Tags: {', '.join(f'`{t}`' for t in cls.tags)}.", ""]
+    examples = {e.input.get("operation"): e for e in cls.examples}
+    for operation, model in _operations(cls.input_schema()):
+        lines.append(f"**`{operation}`**: {_cell(model.get('description', ''))}")
+        lines.append("")
+        lines.append("| Field | Required | Default | Values | Description |")
+        lines.append("|---|---|---|---|---|")
+        required = set(model.get("required", []))
+        for field, prop in model.get("properties", {}).items():
+            if field == "operation":
+                continue
+            kind, _ = _schema_type(prop)
+            default = prop.get("default")
+            shown = "—" if default is None else f"`{json.dumps(default)}`"
+            lines.append(
+                f"| `{field}` | {'yes' if field in required else 'no'} | {shown} | {_cell(kind)} "
+                f"| {_cell(prop.get('description', ''))} |"
+            )
+        example = examples.get(operation)
+        if example is not None:
+            lines += [
+                "",
+                f"Example: {_cell(example.output)}",
+                "",
+                "```json",
+                json.dumps(example.input),
+                "```",
+            ]
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def link_operations(name: str) -> str:
+    from arango_connector_links.main import link_types
+
+    cls = link_types().get(name)
+    if cls is None:
+        return "—"
+    return ", ".join(f"`{op}`" for op, _ in _operations(cls.input_schema()))
 
 
 # -- generated regions ------------------------------------------------------------------
@@ -204,6 +293,8 @@ def render_region(region_id: str, file: Path) -> str:
             return config_table(load_settings_class(SOURCE_INFO[arg].settings))
     if kind == "catalogue":
         return catalogue_table(_doc_link_from(file))
+    if kind == "link":
+        return link_reference(arg)
     if kind == "source-settings":
         return per_source_settings(_doc_link_from(file))
     raise ValueError(f"{file}: unknown generated region {region_id!r}")
@@ -344,6 +435,12 @@ def wiki_pages(root: Path = REPO_ROOT) -> list[WikiPage]:
         pages.append(WikiPage(SOURCES_DIR / info.doc, f"{info.title}-source"))
     if (root / SOURCES_DIR / "_template.md").is_file():
         pages.append(WikiPage(SOURCES_DIR / "_template.md", "Source-page-template"))
+    for source, name in (
+        (Path("docs/links.md"), "Links"),
+        (Path("docs/design/links.md"), "Links-design"),
+    ):
+        if (root / source).is_file():
+            pages.append(WikiPage(source, name))
     return pages
 
 
@@ -410,6 +507,8 @@ def build_wiki(
         "- [Home](Home)\n"
         "- [Documentation](Documentation)\n"
         f"- Sources\n{sources}\n"
+        "- [Links](Links)\n"
+        "  - [Design](Links-design)\n"
         "- [Adding a source](Source-page-template)\n"
     )
     footer = (
@@ -433,7 +532,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("check", help="fail on stale regions, .env.example gaps or broken links")
     wiki = sub.add_parser("wiki", help="render the docs as GitHub wiki pages")
     wiki.add_argument("out", type=Path)
-    wiki.add_argument("--repo", default="arango-solutions/arango-universal-connector")
+    wiki.add_argument("--repo", default="arango-solutions-org/arango-universal-connector")
     wiki.add_argument("--ref", default="main")
     wiki.add_argument("--sha", default="")
     args = parser.parse_args(argv)

@@ -57,6 +57,14 @@ The `scope` mapping (`tenant_id`, `container_id`, `path`), a full example docume
 notes on any field whose meaning is not obvious. The shared top-level fields are
 described in the main README's "Document shape".
 
+## As an ArangoDB Platform Link
+
+If the source has a link: what jobs can do, which settings scope them (and which are
+ignored), and how credentials are passed (`envSecret` or `credentialsSecret`). Link to
+[Links](../links.md) for deployment. Then add the generated reference:
+`<!-- BEGIN GENERATED: link:<name> -->` and `<!-- END GENERATED: link:<name> -->` markers,
+filled in by `make docs-gen`.
+
 ## Privacy and security
 
 What sensitive data the source can hold, the redaction options, and recommended

@@ -18,10 +18,14 @@ from arango_connector_links.link import Example, JobContext, Link
 
 
 class Echo(BaseModel):
+    """``count`` synthetic message documents containing ``text``."""
+
     model_config = ConfigDict(extra="forbid")
 
     operation: Literal["echo"] = "echo"
-    text: str = Field(default="hello from the connector", max_length=10_000)
+    text: str = Field(
+        default="hello from the connector", max_length=10_000, description="Each message's text."
+    )
     count: int = Field(default=1, ge=0, le=10_000, description="Documents to return.")
 
 

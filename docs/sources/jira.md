@@ -238,6 +238,67 @@ So the Compose service runs Jira with retention **off** (`JIRA_RETENTION_DAYS=0`
 its own collection. If you turn it on, expect only recently created issues and comments
 to be kept.
 
+## As an ArangoDB Platform Link
+
+The same source runs as a Link on the ArangoDB Platform: AI tools submit on-demand jobs
+(JQL search, read an issue, export a project's changes) and get the results as JSONL.
+See [Links](../links.md) for deploying and using links.
+
+`JIRA_PROJECTS` lists the only projects a job may read. Every search is limited to them
+in the JQL itself (`project in (...) AND (<your query>)`), each issue returned is checked
+again, and an issue outside them is reported as not found. Polling and initial-sync
+settings are ignored. Put `JIRA_API_TOKEN` in a Secret and pass it with `envSecret`;
+`JIRA_BASE_URL`, `JIRA_EMAIL` and `JIRA_PROJECTS` go in `env`.
+
+<!-- BEGIN GENERATED: link:jira -->
+Read Jira Cloud issues: search with JQL, fetch one issue, or export a project's issues updated in a time range. Returns one document per issue and per comment, as JSONL.
+
+Tags: `issues`, `jira`, `atlassian`.
+
+**`export`**: A project's issues updated in a time range, oldest change first.
+
+| Field | Required | Default | Values | Description |
+|---|---|---|---|---|
+| `include_comments` | no | `true` | boolean | Also return each issue's comments. |
+| `project` | yes | — | string length ≥ 1 | Project key; must be one of the link's. |
+| `updated_after` | no | — | date-time | Updated at or after. |
+| `updated_before` | no | — | date-time | Updated before. |
+| `max_results` | no | `5000` | integer ≥ 1, ≤ 50000 | Issues to return. |
+
+Example: PROJ issues changed since 1 October.
+
+```json
+{"operation": "export", "project": "PROJ", "updated_after": "2026-10-01T00:00:00Z"}
+```
+
+**`get_issue`**: One issue by key.
+
+| Field | Required | Default | Values | Description |
+|---|---|---|---|---|
+| `include_comments` | no | `true` | boolean | Also return each issue's comments. |
+| `key` | yes | — | string length ≥ 1 | e.g. "PROJ-123". |
+
+Example: The issue and its comments.
+
+```json
+{"operation": "get_issue", "key": "PROJ-123"}
+```
+
+**`search`**: Issues matching a JQL query, within the link's projects.
+
+| Field | Required | Default | Values | Description |
+|---|---|---|---|---|
+| `include_comments` | no | `true` | boolean | Also return each issue's comments. |
+| `query` | yes | — | string | JQL, e.g. "status = Done ORDER BY updated DESC". |
+| `max_results` | no | `100` | integer ≥ 1, ≤ 1000 | Issues to return. |
+
+Example: The 20 most recently updated done issues, with comments.
+
+```json
+{"operation": "search", "query": "status = Done ORDER BY updated DESC", "max_results": 20}
+```
+<!-- END GENERATED: link:jira -->
+
 ## Privacy and security
 
 Issues and comments can hold customer data, credentials pasted by mistake, and

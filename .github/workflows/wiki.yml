@@ -8,6 +8,7 @@ on:
       - "README.md"
       - "docs/**"
       - "packages/*/src/**"
+      - "charts/**"
       - "tools/**"
       - ".github/workflows/wiki.yml"
   workflow_dispatch:

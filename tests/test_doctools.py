@@ -161,6 +161,8 @@ def test_wiki_build(tmp_path: Path) -> None:
             "Gmail-source.md",
             "Jira-source.md",
             "Source-page-template.md",
+            "Links.md",
+            "Links-design.md",
             "_Sidebar.md",
             "_Footer.md",
         ]
@@ -171,6 +173,10 @@ def test_wiki_build(tmp_path: Path) -> None:
     assert "](Gmail-source#configuration)" in home
     assert "](docs/sources" not in home
     assert "[Gmail](Gmail-source)" in (tmp_path / "_Sidebar.md").read_text()
+    assert "](Links)" in home
+    links = (tmp_path / "Links.md").read_text()
+    assert "](Jira-source#as-an-arangodb-platform-link)" in links
+    assert "](Links-design)" in links
 
 
 def test_wiki_link_rewriting() -> None:

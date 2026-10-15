@@ -8,6 +8,14 @@ This is the MVP of a **universal connector**: sources (Slack, Gmail and Jira tod
 SharePoint, … later) are normalized into a source-agnostic [`Envelope`](#document-shape)
 and written by a `Sink` (Arango today). Each connector process runs one source.
 
+It runs two ways, sharing the same source code and document shape:
+
+- **Standalone** (this page): a long-running service that ingests **continuously** into
+  ArangoDB collections. Docker or Compose.
+- **As ArangoDB Platform Links** ([docs/links.md](docs/links.md)): on-demand jobs that AI
+  tools submit through the platform (search a mailbox, read a thread, export a project),
+  with results written as JSONL to the platform's storage. Helm, on Kubernetes.
+
 ```
 Slack (Socket Mode) ──► SlackSocketModeAdapter ──► normalize() ──┐
 Gmail (history API) ──► GmailPollingAdapter ────► normalize() ──┼─► Envelope ──► Pipeline ──► ArangoSink ──► connector/<collection>
@@ -21,11 +29,11 @@ Each source has a page with setup, configuration, how sync works, its document s
 privacy notes and troubleshooting.
 
 <!-- BEGIN GENERATED: catalogue -->
-| Source | `SOURCE=` | Kinds | Delivery | What it ingests | Docs |
-|---|---|---|---|---|---|
-| Slack | `slack` | `message` | push (Socket Mode) | Messages, thread replies and edits from allowlisted channels, in real time. | [Slack docs](docs/sources/slack.md) |
-| Gmail | `gmail` | `email`, `attachment` | poll (Gmail history API) | Email from selected mailboxes and labels, incrementally, with optional attachments and text extraction. | [Gmail docs](docs/sources/gmail.md) |
-| Jira | `jira` | `issue`, `comment` | poll (incremental JQL) | Issues and comments from selected Jira Cloud projects, incrementally. | [Jira docs](docs/sources/jira.md) |
+| Source | `SOURCE=` | Kinds | Standalone delivery | As a Link | What it ingests | Docs |
+|---|---|---|---|---|---|---|
+| Slack | `slack` | `message` | push (Socket Mode) | `channel_history`, `get_thread` | Messages, thread replies and edits from allowlisted channels, in real time. | [Slack docs](docs/sources/slack.md) |
+| Gmail | `gmail` | `email`, `attachment` | poll (Gmail history API) | `export`, `get_thread`, `search` | Email from selected mailboxes and labels, incrementally, with optional attachments and text extraction. | [Gmail docs](docs/sources/gmail.md) |
+| Jira | `jira` | `issue`, `comment` | poll (incremental JQL) | `export`, `get_issue`, `search` | Issues and comments from selected Jira Cloud projects, incrementally. | [Jira docs](docs/sources/jira.md) |
 <!-- END GENERATED: catalogue -->
 
 ## What it does
@@ -270,7 +278,7 @@ make docs-gen           # regenerate config tables / source catalogue after chan
 
 CI (`.github/workflows/ci.yml`) runs `make check` and the integration tests (against an
 Arango service container) on every PR and push to `main`. Docs are published to the
-[wiki](https://github.com/arango-solutions/arango-universal-connector/wiki) on merge; see
+[wiki](https://github.com/arango-solutions-org/arango-universal-connector/wiki) on merge; see
 [how the docs are built](docs/README.md#how-these-docs-are-built).
 
 Container targets work with Docker or Podman (auto-detected; override with
@@ -311,7 +319,7 @@ packages/
 │       ├── slack/         # config.py (SlackSettings), normalize.py
 │       ├── gmail/         # config.py, auth.py (+ OAuth helper), client.py, normalize.py
 │       └── jira/          # config.py, client.py, adf.py, normalize.py
-└── standalone/src/arango_connector_standalone/   arango-connector: the continuous service
+├── standalone/src/arango_connector_standalone/   arango-connector: the continuous service
     ├── main.py            # entrypoint: config → registry → pipeline, signal handling
     ├── config.py          # CoreSettings: ArangoDB, retention, dead-letter, logging
     ├── registry.py        # name → factory maps
@@ -325,6 +333,14 @@ packages/
         ├── base.py        # SourceAdapter ABC
         ├── polling.py     # PollingSourceAdapter: interval loop, backoff, clean stop
         └── slack/ gmail/ jira/   # adapter.py: Socket Mode listener / pollers with cursors
+└── links/src/arango_connector_links/         arango-connector-links: ArangoDB Platform Links
+    ├── main.py            # entrypoint: arango-connector-link <name>
+    ├── link.py            # Link base: input models, schemas, JobContext, JobError
+    ├── runtime.py         # LinkV1Internal job loop: register, pick up, run, upload, status
+    ├── results.py         # JSONL result upload
+    ├── links/             # gmail.py, slack.py, jira.py, selftest.py
+    └── _pb/               # generated gRPC stubs (make protos), from packages/links/proto
+charts/arango-connector-link/   # Helm chart: one link per release
 tools/doctools.py          # docs generation and checks, for every package
 dev/platform.sh            # local ArangoDB Platform for testing Links
 ```
@@ -351,6 +367,12 @@ dev/platform.sh            # local ArangoDB Platform for testing Links
    privacy, troubleshooting), add your variables to `.env.example`, and run
    `make docs-gen`. That fills in the configuration table and adds the source to the
    catalogues. See [how the docs are built](docs/README.md#how-these-docs-are-built).
+
+7. **Optionally, add a link.** Put the API calls both runtimes need in
+   `sources/<name>/operations.py` in core, subclass `Link` in
+   `packages/links/.../links/<name>.py` with one input model per operation, register it
+   in the links `main.py`, and run `make docs-gen` for its reference and chart schema.
+   See [docs/links.md](docs/links.md).
 
 A sink implements `Sink` (`setup`, `write(list[Envelope])`, `close`) and is registered
 in `SINKS`.

@@ -27,7 +27,11 @@ replicas: 1
 # which also set the scope jobs may touch. See docs/sources/<link>.md.
 env: {}
 
-# Kubernetes Secret with credentials, mounted read-only at /secrets/<link>
+# Kubernetes Secret whose keys become environment variables (envFrom), for tokens:
+# e.g. SLACK_BOT_TOKEN, JIRA_API_TOKEN. Keeps secrets out of `env`.
+envSecret: ""
+
+# Kubernetes Secret with credential files, mounted read-only at /secrets/<link>
 # (e.g. the Gmail service account key or OAuth token files). Leave empty for selftest.
 credentialsSecret: ""
 

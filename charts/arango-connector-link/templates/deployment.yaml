@@ -25,6 +25,11 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args: [{{ .Values.link | quote }}]
+          {{- if .Values.envSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.envSecret }}
+          {{- end }}
           env:
             {{- range $name, $value := .Values.env }}
             - name: {{ $name }}

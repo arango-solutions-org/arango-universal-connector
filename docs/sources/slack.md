@@ -115,6 +115,51 @@ To run the connector outside Docker: `docker compose up -d arangodb`, then
   messages and thread roots.
 - `updated_at` is the time of the most recent edit.
 
+## As an ArangoDB Platform Link
+
+The same source runs as a Link on the ArangoDB Platform: AI tools submit on-demand jobs
+(read a channel's history or a thread) and get the results as JSONL. See
+[Links](../links.md) for deploying and using links.
+
+A link reads Slack's Web API with the **bot token only** (no app token or Socket Mode),
+and needs the history scopes (`channels:history`, `groups:history`) and `users:read`.
+`SLACK_CHANNEL_IDS` lists the only channels a job may read; the bot must be a member.
+Put `SLACK_BOT_TOKEN` in a Secret and pass it with `envSecret`.
+
+<!-- BEGIN GENERATED: link:slack -->
+Read Slack messages: a channel's history in a time range, or a whole thread. Returns one document per message, with authors' names, as JSONL.
+
+Tags: `chat`, `slack`, `messages`.
+
+**`channel_history`**: A channel's messages in a time range, newest first.
+
+| Field | Required | Default | Values | Description |
+|---|---|---|---|---|
+| `channel` | yes | — | string length ≥ 1 | Channel ID; must be one of the link's. |
+| `oldest` | no | — | date-time | Messages at or after this time. |
+| `latest` | no | — | date-time | Messages at or before this time. |
+| `max_results` | no | `1000` | integer ≥ 1, ≤ 10000 | Messages to return. |
+
+Example: Messages in the channel since 1 October.
+
+```json
+{"operation": "channel_history", "channel": "C0123ABC", "oldest": "2026-10-01T00:00:00Z"}
+```
+
+**`get_thread`**: A thread's root message and every reply.
+
+| Field | Required | Default | Values | Description |
+|---|---|---|---|---|
+| `channel` | yes | — | string length ≥ 1 | Channel ID; must be one of the link's. |
+| `thread_ts` | yes | — | string length ≥ 1 | The thread root message's `ts`. |
+
+Example: The thread's root message and replies.
+
+```json
+{"operation": "get_thread", "channel": "C0123ABC", "thread_ts": "1716500000.123456"}
+```
+<!-- END GENERATED: link:slack -->
+
 ## Privacy and security
 
 Messages are stored with full text and the original event in `raw`. Tokens are held as

@@ -22,7 +22,7 @@ TEST_DB_ENV := ARANGO_HOSTS=$(TEST_DB_URL) ARANGO_PASSWORD=$(TEST_DB_PASSWORD) A
 .PHONY: help install lint format format-check typecheck test test-integration test-all check \
 	test-db-up test-db-down run build up down logs reconcile-expiry gmail-auth clean \
 	docs-gen docs-check wiki-build protos link-image link-e2e platform-up platform-down platform-status platform-forward \
-	platform-load
+	platform-load protos-check helm-lint shellcheck
 
 help: ## Show this help
 	@echo "Usage: make <target> [VAR=value]"
@@ -63,6 +63,18 @@ check: lint format-check typecheck docs-check test ## Everything CI should pass 
 
 protos: ## Regenerate the Links gRPC stubs from packages/links/proto
 	uv run python tools/gen_protos.py
+
+protos-check: protos ## Fail if the committed gRPC stubs differ from the protos
+	git diff --exit-code -- packages/links/src/arango_connector_links/_pb
+
+helm-lint: ## Lint the link chart for every link
+	for link in gmail slack jira selftest; do \
+		helm lint charts/arango-connector-link --strict --set link=$$link \
+			--set arangodb_platform.deployment.name=deployment || exit 1; \
+	done
+
+shellcheck: ## Lint the dev scripts
+	shellcheck dev/*.sh
 
 link-image: _require-container ## Build the Links image (arango-connector-link:dev)
 	$(CONTAINER) build -f packages/links/Dockerfile -t arango-connector-link:dev .
