@@ -9,8 +9,8 @@ import pytest
 
 from arango_connector.envelope import Envelope, Scope
 from arango_connector.payloads import MessagePayload
-from arango_connector.sources.base import EmitFn
-from arango_connector.sources.polling import PollingSourceAdapter
+from arango_connector_standalone.sources.base import EmitFn
+from arango_connector_standalone.sources.polling import PollingSourceAdapter
 
 
 def _envelope(n: int) -> Envelope[MessagePayload]:

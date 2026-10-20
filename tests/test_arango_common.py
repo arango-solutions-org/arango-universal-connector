@@ -6,7 +6,7 @@ import pytest
 import requests
 from arango.exceptions import ArangoServerError, CollectionCreateError
 
-from arango_connector.arango_common import ensure_collection, is_retryable
+from arango_connector_standalone.arango_common import ensure_collection, is_retryable
 
 
 def _server_error(http_code: int | None) -> ArangoServerError:

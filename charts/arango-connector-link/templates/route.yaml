@@ -1,0 +1,14 @@
+apiVersion: networking.arangodb.com/v1beta1
+kind: ArangoRoute
+metadata:
+  name: {{ include "link.name" . }}-route
+spec:
+  deployment: {{ .Values.arangodb_platform.deployment.name }}
+  route:
+    path: /link/{{ include "link.name" . }}/
+  destination:
+    path: /_integration/connector/v1/
+    service:
+      name: {{ include "link.name" . }}
+      # kube-arangodb 1.4.5 resolves a string port by the Service port name.
+      port: integration

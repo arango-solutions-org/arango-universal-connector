@@ -8,12 +8,12 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from arango import ArangoClient
 
-from arango_connector.pipeline import Pipeline
-from arango_connector.retention import RetentionPolicy
-from arango_connector.sinks.arango import ArangoSink
-from arango_connector.sources.gmail.adapter import GmailPollingAdapter
 from arango_connector.sources.gmail.normalize import NormalizeOptions, mailbox_key
-from arango_connector.state.arango import ArangoStateStore
+from arango_connector_standalone.pipeline import Pipeline
+from arango_connector_standalone.retention import RetentionPolicy
+from arango_connector_standalone.sinks.arango import ArangoSink
+from arango_connector_standalone.sources.gmail.adapter import GmailPollingAdapter
+from arango_connector_standalone.state.arango import ArangoStateStore
 from gmail_fakes import FakeGmailClient, message
 
 if TYPE_CHECKING:

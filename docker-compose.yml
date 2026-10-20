@@ -1,6 +1,8 @@
 # What every connector service shares; each service adds its profile and environment.
 x-connector: &connector
-  build: .
+  build:
+    context: .
+    dockerfile: packages/standalone/Dockerfile
   env_file: .env
   depends_on:
     arangodb:

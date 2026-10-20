@@ -176,7 +176,7 @@ otherwise.
 one from `make test-db-up` (<http://localhost:18529>, `root` / `test-password`):
 
 ```bash
-SOURCE=gmail make run      # or: SOURCE=gmail uv run python -m arango_connector.main
+SOURCE=gmail make run      # or: SOURCE=gmail uv run python -m arango_connector_standalone.main
 ```
 
 The `connector` database and its collections are created on the first start, so they
@@ -335,7 +335,7 @@ becomes its own `kind: "attachment"` document in the same collection as the emai
   `.doc`, which needs an external converter) are stored without text and with
   `skipped_reason: "unsupported_type"`. Scanned PDFs without a text layer give
   `no_text`, and password-protected ones give `encrypted`. The extractors live in
-  `arango_connector/extract.py`, shared by all sources.
+  `packages/core/src/arango_connector/extract.py`, shared by all sources.
 - **When files are downloaded.** Only when the email is ingested for the first time:
   new mail, mail that just gained a watched label, or thread replies pulled in with it.
   Read/unread and other label changes rewrite the email but don't re-download its
@@ -347,6 +347,80 @@ becomes its own `kind: "attachment"` document in the same collection as the emai
 - **Size and retention.** Base64 makes files about a third larger. Arango is not a
   blob store, so keep `GMAIL_ATTACHMENT_MAX_BYTES` modest. Attachments carry their
   email's `created_at`, so they expire with it.
+
+## As an ArangoDB Platform Link
+
+The same source runs as a Link on the ArangoDB Platform: AI tools submit on-demand jobs
+(search, read a thread, export a date range) and get the results as JSONL. See
+[Links](../links.md) for deploying and using links. The settings above apply, and they set
+what a job may touch:
+
+- `GMAIL_MAILBOXES`: the only mailboxes a job may read.
+- `GMAIL_LABELS` / `GMAIL_EXCLUDE_LABELS` / `GMAIL_LABEL_MATCH`: every message returned
+  passes the same label and thread rules as standalone sync. `export` can narrow to some
+  of the labels, never widen. With `GMAIL_LABEL_MATCH=message` the labels are added to
+  the Gmail query, so Gmail does the filtering. With `thread` (the default) every message
+  matching the query is read and checked, because a reply can qualify without the label,
+  so give large-mailbox exports a date range.
+- `GMAIL_ATTACHMENTS`: the most a job may request (`metadata` lets jobs ask for `off` or
+  `metadata`, and so on).
+- Polling and initial-sync settings are ignored.
+
+Credentials go in a Kubernetes Secret mounted with `credentialsSecret` (the service
+account key or OAuth token files, at `/secrets/gmail/`); point
+`GMAIL_SERVICE_ACCOUNT_FILE` or `GMAIL_OAUTH_TOKEN_DIR` there.
+
+<!-- BEGIN GENERATED: link:gmail -->
+Read email from Gmail: search with Gmail query syntax, fetch a whole thread, or export a date range. Returns one document per email, plus one per attachment when requested, as JSONL.
+
+Tags: `email`, `gmail`, `google-workspace`.
+
+**`export`**: Messages received in a date range, optionally narrowed to some labels.
+
+| Field | Required | Default | Values | Description |
+|---|---|---|---|---|
+| `mailbox` | yes | — | string | Mailbox to read. Must be one of the link's mailboxes. |
+| `attachments` | no | `"off"` | `off` \\| `metadata` \\| `content` \\| `text` \\| `all` | Attachment documents to include: off, metadata, content (file as base64), text (extracted text) or all. Limited by the link's configuration. |
+| `after` | no | — | date | Received on or after this date. |
+| `before` | no | — | date | Received before this date. |
+| `labels` | no | — | list of string | Only these labels (IDs or names); must be within the link's labels. |
+| `max_results` | no | `1000` | integer ≥ 1, ≤ 10000 | Emails to return. |
+
+Example: Inbox mail since 1 October, with attachment metadata.
+
+```json
+{"operation": "export", "mailbox": "ada@example.com", "after": "2026-10-01", "labels": ["INBOX"], "attachments": "metadata"}
+```
+
+**`get_thread`**: Every message in one thread.
+
+| Field | Required | Default | Values | Description |
+|---|---|---|---|---|
+| `mailbox` | yes | — | string | Mailbox to read. Must be one of the link's mailboxes. |
+| `attachments` | no | `"off"` | `off` \\| `metadata` \\| `content` \\| `text` \\| `all` | Attachment documents to include: off, metadata, content (file as base64), text (extracted text) or all. Limited by the link's configuration. |
+| `thread_id` | yes | — | string length ≥ 1 | Gmail thread ID. |
+
+Example: Every email in the thread.
+
+```json
+{"operation": "get_thread", "mailbox": "ada@example.com", "thread_id": "18c2a1b2"}
+```
+
+**`search`**: Messages matching a Gmail search query.
+
+| Field | Required | Default | Values | Description |
+|---|---|---|---|---|
+| `mailbox` | yes | — | string | Mailbox to read. Must be one of the link's mailboxes. |
+| `attachments` | no | `"off"` | `off` \\| `metadata` \\| `content` \\| `text` \\| `all` | Attachment documents to include: off, metadata, content (file as base64), text (extracted text) or all. Limited by the link's configuration. |
+| `query` | yes | — | string length ≥ 1 | Gmail search syntax, e.g. "from:ada subject:invoice". |
+| `max_results` | no | `100` | integer ≥ 1, ≤ 1000 | Emails to return. |
+
+Example: Emails whose subject mentions invoice.
+
+```json
+{"operation": "search", "mailbox": "ada@example.com", "query": "subject:invoice"}
+```
+<!-- END GENERATED: link:gmail -->
 
 ## Privacy and security
 

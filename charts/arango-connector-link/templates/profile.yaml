@@ -1,0 +1,18 @@
+apiVersion: scheduler.arangodb.com/v1beta1
+kind: ArangoProfile
+metadata:
+  name: {{ include "link.name" . }}-link
+spec:
+  selectors:
+    label:
+      matchLabels:
+        app: {{ include "link.name" . }}
+        profiles.arangodb.com/deployment: {{ .Values.arangodb_platform.deployment.name }}
+  template:
+    priority: 127
+    container:
+      containers:
+        integration:
+          env:
+            - name: INTEGRATION_LINK_V1_CONNECTOR_ID
+              value: {{ include "link.id" . | quote }}

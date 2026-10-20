@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "link.name" . }}
+  labels:
+    app: {{ include "link.name" . }}
+    profiles.arangodb.com/deployment: {{ .Values.arangodb_platform.deployment.name }}
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      app: {{ include "link.name" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "link.name" . }}
+        profiles.arangodb.com/deployment: {{ .Values.arangodb_platform.deployment.name }}
+        integration.profiles.arangodb.com/link: v1
+        integration.profiles.arangodb.com/meta: v1
+        integration.profiles.arangodb.com/authn: v1
+        integration.profiles.arangodb.com/storage: v2
+    spec:
+      containers:
+        - name: connector
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: [{{ .Values.link | quote }}]
+          {{- if .Values.envSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.envSecret }}
+          {{- end }}
+          env:
+            {{- range $name, $value := .Values.env }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.credentialsSecret }}
+          volumeMounts:
+            - name: credentials
+              mountPath: /secrets/{{ .Values.link }}
+              readOnly: true
+          {{- end }}
+      {{- if .Values.credentialsSecret }}
+      volumes:
+        - name: credentials
+          secret:
+            secretName: {{ .Values.credentialsSecret }}
+      {{- end }}

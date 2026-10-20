@@ -1,0 +1,162 @@
+{
+  "description": "Read Jira Cloud issues: search with JQL, fetch one issue, or export a project's issues updated in a time range. Returns one document per issue and per comment, as JSONL.",
+  "input_schema": {
+    "$defs": {
+      "Export": {
+        "additionalProperties": false,
+        "description": "A project's issues updated in a time range, oldest change first.",
+        "properties": {
+          "include_comments": {
+            "default": true,
+            "description": "Also return each issue's comments.",
+            "title": "Include Comments",
+            "type": "boolean"
+          },
+          "max_results": {
+            "default": 5000,
+            "description": "Issues to return.",
+            "maximum": 50000,
+            "minimum": 1,
+            "title": "Max Results",
+            "type": "integer"
+          },
+          "operation": {
+            "const": "export",
+            "title": "Operation",
+            "type": "string"
+          },
+          "project": {
+            "description": "Project key; must be one of the link's.",
+            "minLength": 1,
+            "title": "Project",
+            "type": "string"
+          },
+          "updated_after": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Updated at or after.",
+            "title": "Updated After"
+          },
+          "updated_before": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Updated before.",
+            "title": "Updated Before"
+          }
+        },
+        "required": [
+          "operation",
+          "project"
+        ],
+        "title": "Export",
+        "type": "object"
+      },
+      "GetIssue": {
+        "additionalProperties": false,
+        "description": "One issue by key.",
+        "properties": {
+          "include_comments": {
+            "default": true,
+            "description": "Also return each issue's comments.",
+            "title": "Include Comments",
+            "type": "boolean"
+          },
+          "key": {
+            "description": "e.g. \"PROJ-123\".",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_\\-]+$",
+            "title": "Key",
+            "type": "string"
+          },
+          "operation": {
+            "const": "get_issue",
+            "title": "Operation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation",
+          "key"
+        ],
+        "title": "GetIssue",
+        "type": "object"
+      },
+      "Search": {
+        "additionalProperties": false,
+        "description": "Issues matching a JQL query, within the link's projects.",
+        "properties": {
+          "include_comments": {
+            "default": true,
+            "description": "Also return each issue's comments.",
+            "title": "Include Comments",
+            "type": "boolean"
+          },
+          "max_results": {
+            "default": 100,
+            "description": "Issues to return.",
+            "maximum": 1000,
+            "minimum": 1,
+            "title": "Max Results",
+            "type": "integer"
+          },
+          "operation": {
+            "const": "search",
+            "title": "Operation",
+            "type": "string"
+          },
+          "query": {
+            "description": "JQL, e.g. \"status = Done ORDER BY updated DESC\".",
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation",
+          "query"
+        ],
+        "title": "Search",
+        "type": "object"
+      }
+    },
+    "discriminator": {
+      "mapping": {
+        "export": "#/$defs/Export",
+        "get_issue": "#/$defs/GetIssue",
+        "search": "#/$defs/Search"
+      },
+      "propertyName": "operation"
+    },
+    "oneOf": [
+      {
+        "$ref": "#/$defs/Search"
+      },
+      {
+        "$ref": "#/$defs/GetIssue"
+      },
+      {
+        "$ref": "#/$defs/Export"
+      }
+    ]
+  },
+  "tags": [
+    "issues",
+    "jira",
+    "atlassian"
+  ]
+}

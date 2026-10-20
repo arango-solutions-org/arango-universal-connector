@@ -10,9 +10,13 @@ from typing import Any
 import pytest
 
 from arango_connector.envelope import Envelope
-from arango_connector.sources.jira.adapter import OVERLAP, STATE_NAMESPACE, JiraPollingAdapter
 from arango_connector.sources.jira.client import JiraClient, JiraInterrupted
-from arango_connector.state import InMemoryStateStore
+from arango_connector_standalone.sources.jira.adapter import (
+    OVERLAP,
+    STATE_NAMESPACE,
+    JiraPollingAdapter,
+)
+from arango_connector_standalone.state import InMemoryStateStore
 from jira_fakes import BASE_URL, EMBEDDED_COMMENTS, SITE, FakeJiraClient, comment, issue
 
 NOW = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
