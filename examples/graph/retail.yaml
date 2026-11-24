@@ -1,0 +1,34 @@
+# Graph mapping for the sample retail tables (dev/delta_seed.py). A placeholder for
+# tests and the local demo: a real engagement supplies its own file. Format:
+# docs/graph-sink.md.
+version: 1
+graph: retail
+
+vertices:
+  - collection: Customer
+    source: databricks
+    table: main.retail.customers
+    # attributes omitted: every column is copied under its own name
+  - collection: Product
+    source: databricks
+    table: main.retail.products
+    attributes: {name: name, price: price}   # target: column
+  - collection: Order
+    source: databricks
+    table: main.retail.orders
+    attributes: {status: status, ordered_at: ordered_at}
+    schema: {type: object, required: [status], properties: {status: {type: string}}}
+
+edges:
+  # Keyed by the order row, so a changed customer_id moves the edge.
+  - collection: PLACED_BY
+    source: databricks
+    table: main.retail.orders
+    from: {collection: Order, columns: [order_id]}
+    to: {collection: Customer, columns: [customer_id]}
+  - collection: CONTAINS
+    source: databricks
+    table: main.retail.order_items
+    from: {collection: Order, columns: [order_id]}
+    to: {collection: Product, columns: [product_id]}
+    attributes: {quantity: quantity}

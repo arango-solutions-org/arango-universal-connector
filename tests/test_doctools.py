@@ -94,7 +94,7 @@ def test_repo_docs_are_up_to_date() -> None:
 
 @pytest.fixture
 def repo_copy(tmp_path: Path) -> Path:
-    for rel in ("README.md", "docs", ".env.example", "slack_manifest.yaml"):
+    for rel in ("README.md", "docs", ".env.example", "slack_manifest.yaml", "examples"):
         src = REPO / rel
         if src.is_dir():
             shutil.copytree(src, tmp_path / rel)
@@ -160,6 +160,8 @@ def test_wiki_build(tmp_path: Path) -> None:
             "Slack-source.md",
             "Gmail-source.md",
             "Jira-source.md",
+            "Databricks-source.md",
+            "Graph-sink.md",
             "Source-page-template.md",
             "Links.md",
             "Links-design.md",

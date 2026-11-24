@@ -14,6 +14,8 @@ dist/
 # Secrets / local state
 .env
 dead_letter.jsonl
+# Sample Delta tables from `make delta-seed`
+dev/delta/
 # Gmail service account keys and OAuth tokens
 secrets/
 

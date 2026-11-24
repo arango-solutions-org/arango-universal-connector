@@ -12,7 +12,13 @@ configuration, how sync works, its document shape, privacy and troubleshooting.
 | Slack | `slack` | `message` | push (Socket Mode) | `channel_history`, `get_thread` | Messages, thread replies and edits from allowlisted channels, in real time. | [Slack docs](sources/slack.md) |
 | Gmail | `gmail` | `email`, `attachment` | poll (Gmail history API) | `export`, `get_thread`, `search` | Email from selected mailboxes and labels, incrementally, with optional attachments and text extraction. | [Gmail docs](sources/gmail.md) |
 | Jira | `jira` | `issue`, `comment` | poll (incremental JQL) | `export`, `get_issue`, `search` | Issues and comments from selected Jira Cloud projects, incrementally. | [Jira docs](sources/jira.md) |
+| Databricks | `databricks` | `row` | poll (Delta change data feed) | — | Rows of selected Delta tables: a snapshot, then their change data feed. Local Delta Lake tables stand in for Databricks for now. | [Databricks docs](sources/databricks.md) |
 <!-- END GENERATED: catalogue -->
+
+## Graph sink
+
+`SINK=arango_graph` writes table rows as vertices and edges of a named graph, following
+a mapping file: [graph-sink.md](graph-sink.md).
 
 ## Links
 

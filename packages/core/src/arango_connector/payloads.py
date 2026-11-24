@@ -9,15 +9,14 @@ TODO(future): kinds for upcoming sources follow the same pattern, e.g.
         kind: Literal["document"] = "document"
         title, path, mime_type, size, url, author, version, content
 
-    class RowPayload(Payload):        # Snowflake, Postgres
-        kind: Literal["row"] = "row"
-        table, primary_key: dict[str, Any], columns: dict[str, Any]
+``RowPayload`` (Databricks today) is the shape Snowflake, Postgres and other table
+sources should reuse.
 """
 
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -158,3 +157,15 @@ class AttachmentPayload(Payload):
     # Why content or text is missing although requested: "too_large", "download_failed",
     # or a text reason such as "unsupported_type", "no_text", "encrypted".
     skipped_reason: str | None = None
+
+
+class RowPayload(Payload):
+    """A table row (Databricks today; Snowflake, Postgres, ... later)."""
+
+    kind: Literal["row"] = "row"
+    # Three-part name: ``catalog.schema.table``.
+    table: str
+    # The primary key columns, in declared key order. Values are JSON-safe.
+    primary_key: dict[str, Any]
+    # Every column, key columns included. Values are JSON-safe.
+    columns: dict[str, Any]
