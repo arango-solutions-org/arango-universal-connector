@@ -48,4 +48,13 @@ SOURCE_INFO: dict[str, SourceInfo] = {
         settings="arango_connector.sources.jira.config:JiraSettings",
         doc="jira.md",
     ),
+    "databricks": SourceInfo(
+        title="Databricks",
+        summary="Rows of selected Delta tables: a snapshot, then their change data feed. "
+        "Local Delta Lake tables stand in for Databricks for now.",
+        kinds=("row",),
+        delivery="poll (Delta change data feed)",
+        settings="arango_connector.sources.databricks.config:DatabricksSettings",
+        doc="databricks.md",
+    ),
 }

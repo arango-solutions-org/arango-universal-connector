@@ -67,6 +67,28 @@ services:
       RETENTION_DAYS: ${JIRA_RETENTION_DAYS:-0}
       DEAD_LETTER_PATH: /data/jira_dead_letter.jsonl
 
+  # Databricks rows into the named graph described by the mapping file. Local Delta Lake
+  # tables stand in for Databricks for now: seed them with `make delta-seed`. Graph
+  # documents have no created_at, so retention is off. Start it with:
+  # docker compose --profile databricks up -d
+  connector-databricks:
+    <<: *connector
+    profiles: ["databricks"]
+    environment:
+      SOURCE: databricks
+      SINK: arango_graph
+      ARANGO_HOSTS: http://arangodb:8529
+      RETENTION_DAYS: 0
+      DEAD_LETTER_PATH: /data/databricks_dead_letter.jsonl
+      DATABRICKS_TABLES: ${DATABRICKS_TABLES:-main.retail.customers:customer_id,main.retail.products:product_id,main.retail.orders:order_id,main.retail.order_items:order_id+product_id}
+      # Paths inside the container, mounted read-only from the host paths below.
+      DATABRICKS_DELTA_ROOT: /delta
+      GRAPH_MAPPING_FILE: /config/graph.yaml
+    volumes: # replaces the shared list, so it repeats /data
+      - connector_data:/data
+      - ${DATABRICKS_HOST_DELTA_ROOT:-./dev/delta}:/delta:ro
+      - ${HOST_GRAPH_MAPPING_FILE:-./examples/graph/retail.yaml}:/config/graph.yaml:ro
+
 volumes:
   arangodb_data:
   arangodb_apps:

@@ -36,6 +36,7 @@ from arango_connector.catalog import SOURCE_INFO
 from arango_connector.config import ConnectorSettings
 from arango_connector_standalone.config import CoreSettings
 from arango_connector_standalone.registry import SOURCES
+from arango_connector_standalone.sinks.graph import GraphSinkSettings
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CHART_SCHEMAS = Path("charts/arango-connector-link/schemas")
@@ -46,6 +47,7 @@ GENERATED_FILES = (
     Path("README.md"),
     Path("docs/README.md"),
     Path("docs/links.md"),
+    Path("docs/graph-sink.md"),
     *(SOURCES_DIR / info.doc for info in SOURCE_INFO.values()),
 )
 
@@ -289,6 +291,8 @@ def render_region(region_id: str, file: Path) -> str:
     if kind == "config":
         if arg == "core":
             return config_table(CoreSettings)
+        if arg == "arango_graph":
+            return config_table(GraphSinkSettings)
         if arg in SOURCE_INFO:
             return config_table(load_settings_class(SOURCE_INFO[arg].settings))
     if kind == "catalogue":
@@ -391,6 +395,7 @@ def env_example_gaps(root: Path = REPO_ROOT) -> list[str]:
     present = set(re.findall(r"^#?\s*([A-Z][A-Z0-9_]*)=", text, flags=re.MULTILINE))
     classes: list[type[ConnectorSettings]] = [
         CoreSettings,
+        GraphSinkSettings,
         *(load_settings_class(i.settings) for i in SOURCE_INFO.values()),
     ]
     return [
@@ -436,6 +441,7 @@ def wiki_pages(root: Path = REPO_ROOT) -> list[WikiPage]:
     if (root / SOURCES_DIR / "_template.md").is_file():
         pages.append(WikiPage(SOURCES_DIR / "_template.md", "Source-page-template"))
     for source, name in (
+        (Path("docs/graph-sink.md"), "Graph-sink"),
         (Path("docs/links.md"), "Links"),
         (Path("docs/design/links.md"), "Links-design"),
     ):
@@ -507,6 +513,7 @@ def build_wiki(
         "- [Home](Home)\n"
         "- [Documentation](Documentation)\n"
         f"- Sources\n{sources}\n"
+        "- [Graph sink](Graph-sink)\n"
         "- [Links](Links)\n"
         "  - [Design](Links-design)\n"
         "- [Adding a source](Source-page-template)\n"

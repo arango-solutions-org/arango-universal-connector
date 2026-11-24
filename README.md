@@ -1,12 +1,15 @@
 # Arango Connector
 
 A Python service that streams messages from Slack channels (in real time, over Socket
-Mode), emails from Gmail mailboxes and issues and comments from Jira Cloud projects
-(both polled incrementally) into Arango as JSON documents.
+Mode), emails from Gmail mailboxes, issues and comments from Jira Cloud projects and
+rows of Delta tables (all polled incrementally) into Arango as JSON documents, or, for
+table rows, as the vertices and edges of a named graph.
 
 This is the MVP of a **universal connector**: sources (Slack, Gmail and Jira today; Teams,
 SharePoint, … later) are normalized into a source-agnostic [`Envelope`](#document-shape)
-and written by a `Sink` (Arango today). Each connector process runs one source.
+and written by a `Sink` (`arango`, one document per envelope, or
+[`arango_graph`](docs/graph-sink.md), vertices and edges from a mapping file). Each
+connector process runs one source.
 
 It runs two ways, sharing the same source code and document shape:
 
@@ -19,8 +22,9 @@ It runs two ways, sharing the same source code and document shape:
 ```
 Slack (Socket Mode) ──► SlackSocketModeAdapter ──► normalize() ──┐
 Gmail (history API) ──► GmailPollingAdapter ────► normalize() ──┼─► Envelope ──► Pipeline ──► ArangoSink ──► connector/<collection>
-Jira (JQL search) ────► JiraPollingAdapter ─────► normalize() ──┘                  │  (stamps expires_at)
-        ▲ cursor per mailbox / project in connector_state                           └─ on final failure ──► dead_letter.jsonl
+Jira (JQL search) ────► JiraPollingAdapter ─────► normalize() ──┤                  │  (stamps expires_at)
+Delta tables (CDF) ───► DatabricksPollingAdapter ► normalize() ──┘                  ├─ on final failure ──► dead_letter.jsonl
+        ▲ cursor per mailbox / project / table in connector_state                   └─► ArangoGraphSink ──► vertices + edges, named graph
 ```
 
 ## Sources
@@ -34,6 +38,7 @@ privacy notes and troubleshooting.
 | Slack | `slack` | `message` | push (Socket Mode) | `channel_history`, `get_thread` | Messages, thread replies and edits from allowlisted channels, in real time. | [Slack docs](docs/sources/slack.md) |
 | Gmail | `gmail` | `email`, `attachment` | poll (Gmail history API) | `export`, `get_thread`, `search` | Email from selected mailboxes and labels, incrementally, with optional attachments and text extraction. | [Gmail docs](docs/sources/gmail.md) |
 | Jira | `jira` | `issue`, `comment` | poll (incremental JQL) | `export`, `get_issue`, `search` | Issues and comments from selected Jira Cloud projects, incrementally. | [Jira docs](docs/sources/jira.md) |
+| Databricks | `databricks` | `row` | poll (Delta change data feed) | — | Rows of selected Delta tables: a snapshot, then their change data feed. Local Delta Lake tables stand in for Databricks for now. | [Databricks docs](docs/sources/databricks.md) |
 <!-- END GENERATED: catalogue -->
 
 ## What it does
@@ -107,6 +112,7 @@ All settings come from environment variables or `.env`.
 - `SLACK_*`: required only when `SOURCE=slack`. See [Slack configuration](docs/sources/slack.md#configuration).
 - `GMAIL_*`: required only when `SOURCE=gmail`. See [Gmail configuration](docs/sources/gmail.md#configuration).
 - `JIRA_*`: required only when `SOURCE=jira`. See [Jira configuration](docs/sources/jira.md#configuration).
+- `DATABRICKS_*`: required only when `SOURCE=databricks`. See [Databricks configuration](docs/sources/databricks.md#configuration).
 <!-- END GENERATED: source-settings -->
 
 Each source loads its own settings class, so a deployment only needs the variables of
@@ -228,6 +234,7 @@ page shows a full example and its payload fields.
   | [slack](docs/sources/slack.md#document-shape) | team | channel | `[]` |
   | [gmail](docs/sources/gmail.md#document-shape) | mailbox domain | mailbox key | `[]` |
   | [jira](docs/sources/jira.md#document-shape) | site host | project id | `[]` (issue), `[issue id]` (comment) |
+  | [databricks](docs/sources/databricks.md#document-shape) | workspace | catalog | `[schema, table]` |
 
 - `updated_at` is when the content last changed in the source (a Slack edit, a Gmail
   label change, a Jira issue's or comment's `updated`), or `null`.
@@ -241,6 +248,7 @@ page shows a full example and its payload fields.
 | `attachment` | `AttachmentPayload`: filename, type, size, optional file and extracted text | Gmail (`GMAIL_ATTACHMENTS`) |
 | `issue` | `IssuePayload`: key, summary, description, status, type, people, labels, parent | Jira |
 | `comment` | `CommentPayload`: author, text, parent item, visibility | Jira |
+| `row` | `RowPayload`: table, primary key, columns (JSON-safe) | Databricks |
 
 Persistent indexes are created on `[scope.container_id, created_at]`,
 `[source, scope.tenant_id, scope.container_id]` and `[kind]`.
@@ -312,13 +320,16 @@ packages/
 ├── core/src/arango_connector/              arango-connector-core: shared by every runtime
 │   ├── envelope.py        # source-agnostic Envelope, Scope, make_key()
 │   ├── payloads.py        # typed payloads per entity kind (MessagePayload, ...)
+│   ├── keys.py            # key_part(): key fragments shared by sources and the graph
 │   ├── extract.py         # text from files (PDF, DOCX, HTML, text)
 │   ├── config.py          # settings base, load_settings(), ConfigError
 │   ├── catalog.py         # SOURCE_INFO: what each source is (docs, tooling)
+│   ├── graph/             # mapping.py (mapping file), project.py (rows → vertices/edges)
 │   └── sources/
 │       ├── slack/         # config.py (SlackSettings), normalize.py
 │       ├── gmail/         # config.py, auth.py (+ OAuth helper), client.py, normalize.py
-│       └── jira/          # config.py, client.py, adf.py, normalize.py
+│       ├── jira/          # config.py, client.py, adf.py, normalize.py
+│       └── databricks/    # config.py, client.py (protocol), local_delta.py, normalize.py
 ├── standalone/src/arango_connector_standalone/   arango-connector: the continuous service
     ├── main.py            # entrypoint: config → registry → pipeline, signal handling
     ├── config.py          # CoreSettings: ArangoDB, retention, dead-letter, logging
@@ -328,11 +339,11 @@ packages/
     ├── maintenance.py     # arango-connector-reconcile-expiry (operator command)
     ├── arango_common.py   # connection, retry policy shared by sink and state store
     ├── state/             # StateStore: base, arango, memory (tests)
-    ├── sinks/             # Sink: base, arango
+    ├── sinks/             # Sink: base, arango, graph (SINK=arango_graph)
     └── sources/
         ├── base.py        # SourceAdapter ABC
         ├── polling.py     # PollingSourceAdapter: interval loop, backoff, clean stop
-        └── slack/ gmail/ jira/   # adapter.py: Socket Mode listener / pollers with cursors
+        └── slack/ gmail/ jira/ databricks/   # adapter.py: Socket Mode listener / pollers
 └── links/src/arango_connector_links/         arango-connector-links: ArangoDB Platform Links
     ├── main.py            # entrypoint: arango-connector-link <name>
     ├── link.py            # Link base: input models, schemas, JobContext, JobError
@@ -343,6 +354,8 @@ packages/
 charts/arango-connector-link/   # Helm chart: one link per release
 tools/doctools.py          # docs generation and checks, for every package
 dev/platform.sh            # local ArangoDB Platform for testing Links
+dev/delta_seed.py          # sample Delta tables for the Databricks source (make delta-seed)
+examples/graph/retail.yaml # sample graph mapping for those tables
 ```
 
 ### Adding a new source or sink
@@ -385,7 +398,11 @@ the extension points, and the "Not supported yet" section of each source's page.
 - Deletes. An item deleted in its source stays in Arango until `RETENTION_DAYS`
   elapses. Handling them needs a delete operation on `Envelope` and `Sink`, which
   today only express "write this document".
-- Graph modeling (users/channels collections, edges) and ArangoSearch.
+- Graph modeling beyond table rows: `SINK=arango_graph` maps `row` envelopes only
+  (Slack, Gmail and Jira into a graph, and identity resolution, come later), and there
+  is no ArangoSearch. See [the graph sink's limitations](docs/graph-sink.md#limitations).
+- Real Databricks: the Databricks source reads local Delta Lake tables for now. See
+  [its page](docs/sources/databricks.md#not-supported-yet).
 - Queues, batching, and a dead-letter collection.
 - More sources: IMAP (SE-136), webhook / HTTP ingest (SE-137), Teams, SharePoint, …
 - Running more than one source per process (SE-132); run one container per source for

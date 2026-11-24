@@ -45,7 +45,7 @@ class RacingDb:
     def has_collection(self, _name: str) -> bool:
         return self.checks.pop(0)
 
-    def create_collection(self, _name: str) -> None:
+    def create_collection(self, _name: str, edge: bool = False) -> None:
         raise CollectionCreateError.__new__(CollectionCreateError)
 
 

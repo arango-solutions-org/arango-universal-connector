@@ -82,12 +82,14 @@ def connect(
     return client, client.db(db_name, username=username, password=password)
 
 
-def ensure_collection(db: StandardDatabase, name: str) -> None:
-    """Create the collection if missing."""
+def ensure_collection(db: StandardDatabase, name: str, *, edge: bool = False) -> None:
+    """Create the collection (an edge collection with ``edge=True``) if missing."""
     if not db.has_collection(name):
         try:
-            db.create_collection(name)
-            logger.info("arango_collection_created db=%s collection=%s", db.name, name)
+            db.create_collection(name, edge=edge)
+            logger.info(
+                "arango_collection_created db=%s collection=%s edge=%s", db.name, name, edge
+            )
         except CollectionCreateError:
             # Lost a race with another process creating it; fine if it now exists.
             if not db.has_collection(name):

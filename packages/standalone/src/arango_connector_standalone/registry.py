@@ -110,6 +110,32 @@ def build_jira_adapter(settings: CoreSettings, state: StateStore) -> SourceAdapt
     )
 
 
+def build_databricks_adapter(settings: CoreSettings, state: StateStore) -> SourceAdapter:
+    """Build the Databricks polling adapter. Its cursors live in ``state``."""
+    from arango_connector.sources.databricks.client import DeltaTableClient
+    from arango_connector.sources.databricks.config import DatabricksSettings
+    from arango_connector_standalone.sources.databricks.adapter import DatabricksPollingAdapter
+
+    databricks = load_settings(DatabricksSettings)
+
+    def client_factory() -> DeltaTableClient:
+        # TODO(future): branch on databricks_backend; "sql" builds a DatabricksSqlClient.
+        from arango_connector.sources.databricks.local_delta import LocalDeltaClient
+
+        assert databricks.databricks_delta_root is not None  # checked by the settings
+        return LocalDeltaClient(
+            databricks.databricks_delta_root, batch_size=databricks.databricks_batch_size
+        )
+
+    return DatabricksPollingAdapter(
+        databricks.databricks_tables,
+        client_factory,
+        state,
+        workspace=databricks.databricks_workspace,
+        interval_seconds=databricks.databricks_poll_interval_seconds,
+    )
+
+
 def build_arango_sink(settings: CoreSettings) -> Sink:
     """Build the ArangoDB sink from settings."""
     from arango_connector_standalone.sinks.arango import ArangoSink
@@ -121,6 +147,21 @@ def build_arango_sink(settings: CoreSettings) -> Sink:
         db_name=settings.arango_db,
         collection_name=settings.arango_collection,
         retention=settings.retention_policy(),
+    )
+
+
+def build_arango_graph_sink(settings: CoreSettings) -> Sink:
+    """Build the graph sink from settings and the mapping file named by GRAPH_MAPPING_FILE."""
+    from arango_connector.graph.mapping import load_mapping
+    from arango_connector_standalone.sinks.graph import ArangoGraphSink, GraphSinkSettings
+
+    graph = load_settings(GraphSinkSettings)
+    return ArangoGraphSink(
+        hosts=settings.arango_hosts,
+        username=settings.arango_username,
+        password=settings.arango_password.get_secret_value(),
+        db_name=settings.arango_db,
+        mapping=load_mapping(graph.graph_mapping_file),
     )
 
 
@@ -142,10 +183,12 @@ SOURCES: dict[str, SourceFactory] = {
     "slack": build_slack_adapter,
     "gmail": build_gmail_adapter,
     "jira": build_jira_adapter,
+    "databricks": build_databricks_adapter,
 }
 
 SINKS: dict[str, SinkFactory] = {
     "arango": build_arango_sink,
+    "arango_graph": build_arango_graph_sink,
 }
 
 

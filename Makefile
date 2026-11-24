@@ -21,7 +21,7 @@ TEST_DB_ENV := ARANGO_HOSTS=$(TEST_DB_URL) ARANGO_PASSWORD=$(TEST_DB_PASSWORD) A
 
 .PHONY: help install lint format format-check typecheck test test-integration test-all check \
 	test-db-up test-db-down run build up down logs reconcile-expiry gmail-auth clean \
-	docs-gen docs-check wiki-build protos link-image link-e2e platform-up platform-down platform-status platform-forward \
+	docs-gen docs-check wiki-build delta-seed delta-mutate protos link-image link-e2e platform-up platform-down platform-status platform-forward \
 	platform-load protos-check helm-lint shellcheck
 
 help: ## Show this help
@@ -143,13 +143,19 @@ up: _require-container ## Start ArangoDB and the Slack connector with Compose
 	$(COMPOSE) --profile slack up --build -d
 
 down: _require-container ## Stop the Compose stack, every source (keeps data volumes)
-	$(COMPOSE) --profile slack --profile gmail --profile jira down
+	$(COMPOSE) --profile slack --profile gmail --profile jira --profile databricks down
 
 logs: _require-container ## Follow the connector's Compose logs
 	$(COMPOSE) logs -f connector
 
 reconcile-expiry: ## Apply RETENTION_DAYS to stored documents (ARGS="--dry-run")
 	uv run arango-connector-reconcile-expiry $(ARGS)
+
+delta-seed: ## Create the sample retail Delta tables under dev/delta (Databricks stand-in)
+	uv run python dev/delta_seed.py init
+
+delta-mutate: ## Insert, update and delete a row in the sample Delta tables
+	uv run python dev/delta_seed.py mutate
 
 GMAIL_CLIENT_SECRETS ?= secrets/gmail/client.json
 GMAIL_TOKEN_DIR ?= secrets/gmail
